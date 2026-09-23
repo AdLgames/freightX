@@ -1,8 +1,8 @@
 {
-  "name": "09-ddp-supplier-bears-duty-and-vat",
-  "notes": "DDP: duty (312.00) and VAT (842.40 on 3900 + 312 = 4212) are computed but supplier-borne; user totals exclude them. Ex-VAT total = 3900 + platform fee 25 = 3925.00; inc VAT identical. vatRecoverable false.",
+  "name": "33-inland-vat-adjustment-lcl",
+  "notes": "Broker test (incidental costs): rate source gave no UK leg → FREIGHT_SPLIT_ASSUMED, post-border 0. £170 LCL estimate added to the VAT base only: 4440 + 355.20 + 235 + 170 = 5200.20 → VAT 1040.04. Landed ex VAT = 3900 + 400 + 120 + 235 + 20 + 355.20 = 5030.20 (UK delivery NOT included; warning says so).",
   "input": {
-    "incoterm": "DDP",
+    "incoterm": "EXW",
     "mode": "SEA_LCL",
     "originCountry": "CN",
     "originPort": "CNSHA",
@@ -61,14 +61,16 @@
       "source": "RATE_SHEET_V1",
       "fetchedAt": "2026-09-10T10:00:00Z",
       "toBorderGbp": "400",
-      "postBorderGbp": "150",
+      "postBorderGbp": null,
       "originFeesGbp": "120",
       "destinationFeesGbp": "180",
       "clearanceFeeGbp": "55"
     },
-    "insurance": null,
+    "insurance": {
+      "premiumGbp": "20"
+    },
     "vatRegistered": true,
-    "platformFeeGbp": "25"
+    "inlandVatAdjustmentGbp": "170"
   },
   "expected": {
     "ok": true,
@@ -77,17 +79,17 @@
       "status": "READY",
       "warnings": [
         {
-          "code": "FREIGHT_INCLUDED_IN_PRICE",
-          "message": "DDP: international freight is included in the supplier price and has not been added.",
+          "code": "FREIGHT_SPLIT_ASSUMED",
+          "message": "Rate source did not split freight at the UK border; 100% treated as to-border (dutiable).",
           "blocking": false
         },
         {
-          "code": "DDP_SUPPLIER_BEARS_DUTY",
-          "message": "DDP: the supplier is the importer of record and pays UK duty and VAT. DDP into the UK rarely works cleanly for micro-importers — confirm the supplier has a UK EORI and VAT registration.",
+          "code": "INLAND_VAT_ADJUSTMENT",
+          "message": "UK inland costs are unknown, so £170.00 was added to the VAT base as an estimate. UK delivery is NOT included in the landed cost.",
           "blocking": false
         }
       ],
-      "incoterm": "DDP",
+      "incoterm": "EXW",
       "mode": "SEA_LCL",
       "apportionmentBasis": "SEA_WEIGHT_OR_MEASURE",
       "fxRate": "0.78",
@@ -105,26 +107,26 @@
       "validUntil": "2026-09-17T10:00:00.000Z",
       "totals": {
         "goodsValueGbp": "3900.00",
-        "freightCost": "0.00",
-        "freightToBorderGbp": "0.00",
+        "freightCost": "400.00",
+        "freightToBorderGbp": "400.00",
         "freightPostBorderGbp": "0.00",
-        "originFees": "0.00",
-        "destinationFees": "0.00",
-        "insurancePremium": "0.00",
-        "customsValue": "3900.00",
-        "totalDuty": "0.00",
-        "totalVat": "0.00",
-        "vatRecoverable": false,
+        "originFees": "120.00",
+        "destinationFees": "235.00",
+        "insurancePremium": "20.00",
+        "customsValue": "4440.00",
+        "totalDuty": "355.20",
+        "totalVat": "1040.04",
+        "vatRecoverable": true,
         "vatPostponed": false,
-        "borderOutlay": "0.00",
+        "borderOutlay": "1395.24",
         "assistsGbp": "0.00",
         "financingFee": "0.00",
-        "inlandVatAdjustment": "0.00",
-        "platformFee": "25.00",
-        "totalLandedCostExVat": "3925.00",
-        "totalLandedCost": "3925.00",
-        "supplierBorneDuty": "312.00",
-        "supplierBorneVat": "842.40"
+        "inlandVatAdjustment": "170.00",
+        "platformFee": "0.00",
+        "totalLandedCostExVat": "5030.20",
+        "totalLandedCost": "6070.24",
+        "supplierBorneDuty": "0.00",
+        "supplierBorneVat": "0.00"
       },
       "lines": [
         {
@@ -146,25 +148,25 @@
           "preferenceClaimed": false,
           "addRatePct": null,
           "vatRatePct": "20.00",
-          "allocatedFreightGbp": "0.00",
-          "allocatedFreightToBorderGbp": "0.00",
+          "allocatedFreightGbp": "400.00",
+          "allocatedFreightToBorderGbp": "400.00",
           "allocatedFreightPostBorderGbp": "0.00",
-          "allocatedOriginFeesGbp": "0.00",
-          "allocatedDestinationFeesGbp": "0.00",
-          "allocatedInsuranceGbp": "0.00",
-          "allocatedPlatformFeeGbp": "25.00",
+          "allocatedOriginFeesGbp": "120.00",
+          "allocatedDestinationFeesGbp": "235.00",
+          "allocatedInsuranceGbp": "20.00",
+          "allocatedPlatformFeeGbp": "0.00",
           "assistsGbp": "0.00",
           "allocatedFinancingFeeGbp": "0.00",
-          "allocatedInlandVatAdjustmentGbp": "0.00",
-          "lineCustomsValueGbp": "3900.00",
-          "lineDutyGbp": "0.00",
-          "lineVatGbp": "0.00",
-          "supplierBorneDutyGbp": "312.00",
-          "supplierBorneVatGbp": "842.40",
-          "lineLandedCostExVatGbp": "3925.00",
-          "lineLandedCostGbp": "3925.00",
-          "landedCostPerUnit": "3.9250",
-          "landedCostPerUnitIncVat": "3.9250"
+          "allocatedInlandVatAdjustmentGbp": "170.00",
+          "lineCustomsValueGbp": "4440.00",
+          "lineDutyGbp": "355.20",
+          "lineVatGbp": "1040.04",
+          "supplierBorneDutyGbp": "0.00",
+          "supplierBorneVatGbp": "0.00",
+          "lineLandedCostExVatGbp": "5030.20",
+          "lineLandedCostGbp": "6070.24",
+          "landedCostPerUnit": "5.0302",
+          "landedCostPerUnitIncVat": "6.0702"
         }
       ]
     }

@@ -41,6 +41,12 @@ lineLandedExVat     = goods + allocFreight(both legs) + allocOrigin + allocDesti
 landedCostPerUnit   = round4(lineLandedExVat / quantity)     (+ VAT variant)
 ```
 
+Engine 1.1 additions (ADR-0011): `lineCustomsValue` also adds the line's **assists** (tooling,
+moulds, design), which also enter landed cost. The VAT base adds the optional **inland VAT
+adjustment** only when the UK leg is unknown. `borderOutlay = duty + VAT` (VAT dropped under
+**postponed VAT accounting**). A **broker deferment fee** = max(minimum, % × borderOutlay) is
+allocated by outlay share and included in landed cost.
+
 Quote totals are sums of line values, so `Σ lines == totals` to the penny (property-tested).
 
 ### Apportionment basis
@@ -89,7 +95,7 @@ Blocking warnings (→ `INDICATIVE`): `HS_UNVERIFIED`, `TARIFF_AMBIGUOUS`, `RATE
 
 ## Tests
 
-- `test/golden.test.ts` — 28 scenarios in `fixtures/quotes/*.json`, each with a `notes` field
+- `test/golden.test.ts` — 35 scenarios in `fixtures/quotes/*.json`, each with a `notes` field
   holding the hand calculation. **Any change to `expected` is a formula change**: bump
   `CALC_VERSION`, get a customs practitioner to review (decision #4).
   Regenerate with `pnpm --filter @harbour/engine run fixtures:update`.

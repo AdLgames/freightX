@@ -1,6 +1,6 @@
 {
-  "name": "09-ddp-supplier-bears-duty-and-vat",
-  "notes": "DDP: duty (312.00) and VAT (842.40 on 3900 + 312 = 4212) are computed but supplier-borne; user totals exclude them. Ex-VAT total = 3900 + platform fee 25 = 3925.00; inc VAT identical. vatRecoverable false.",
+  "name": "35-ddp-single-invoice-5000",
+  "notes": "Broker test (DDP trap): £5,000 invoice with freight/insurance not itemised → HMRC values the whole £5,000. Duty 8% = 400.00 and VAT on 5400 = 1080.00 computed and shown as supplier-borne; buyer pays neither; DDP_SUPPLIER_BEARS_DUTY.",
   "input": {
     "incoterm": "DDP",
     "mode": "SEA_LCL",
@@ -15,7 +15,7 @@
         "originCountry": "CN",
         "quantity": 1000,
         "unitValue": "5.00",
-        "currency": "USD",
+        "currency": "GBP",
         "unitWeightKg": "0.5",
         "unitVolumeCbm": "0.002",
         "tariff": {
@@ -67,8 +67,7 @@
       "clearanceFeeGbp": "55"
     },
     "insurance": null,
-    "vatRegistered": true,
-    "platformFeeGbp": "25"
+    "vatRegistered": true
   },
   "expected": {
     "ok": true,
@@ -90,28 +89,22 @@
       "incoterm": "DDP",
       "mode": "SEA_LCL",
       "apportionmentBasis": "SEA_WEIGHT_OR_MEASURE",
-      "fxRate": "0.78",
+      "fxRate": "1",
       "fxSource": "HMRC_MONTHLY",
-      "fxDate": "2026-09-01",
-      "fxSnapshots": {
-        "USD": {
-          "rateToGbp": "0.78",
-          "source": "HMRC_MONTHLY",
-          "date": "2026-09-01"
-        }
-      },
+      "fxDate": "2026-09-10",
+      "fxSnapshots": {},
       "rateSource": "RATE_SHEET_V1",
       "rateFetchedAt": "2026-09-10T10:00:00Z",
       "validUntil": "2026-09-17T10:00:00.000Z",
       "totals": {
-        "goodsValueGbp": "3900.00",
+        "goodsValueGbp": "5000.00",
         "freightCost": "0.00",
         "freightToBorderGbp": "0.00",
         "freightPostBorderGbp": "0.00",
         "originFees": "0.00",
         "destinationFees": "0.00",
         "insurancePremium": "0.00",
-        "customsValue": "3900.00",
+        "customsValue": "5000.00",
         "totalDuty": "0.00",
         "totalVat": "0.00",
         "vatRecoverable": false,
@@ -120,11 +113,11 @@
         "assistsGbp": "0.00",
         "financingFee": "0.00",
         "inlandVatAdjustment": "0.00",
-        "platformFee": "25.00",
-        "totalLandedCostExVat": "3925.00",
-        "totalLandedCost": "3925.00",
-        "supplierBorneDuty": "312.00",
-        "supplierBorneVat": "842.40"
+        "platformFee": "0.00",
+        "totalLandedCostExVat": "5000.00",
+        "totalLandedCost": "5000.00",
+        "supplierBorneDuty": "400.00",
+        "supplierBorneVat": "1080.00"
       },
       "lines": [
         {
@@ -133,9 +126,9 @@
           "originCountry": "CN",
           "quantity": 1000,
           "unitValue": "5.0000",
-          "currency": "USD",
-          "unitValueGbp": "3.9000",
-          "lineGoodsValueGbp": "3900.00",
+          "currency": "GBP",
+          "unitValueGbp": "5.0000",
+          "lineGoodsValueGbp": "5000.00",
           "lineWeightKg": "500.000",
           "lineVolumeCbm": "2.0000",
           "chargeableWeight": "2.0000",
@@ -152,19 +145,19 @@
           "allocatedOriginFeesGbp": "0.00",
           "allocatedDestinationFeesGbp": "0.00",
           "allocatedInsuranceGbp": "0.00",
-          "allocatedPlatformFeeGbp": "25.00",
+          "allocatedPlatformFeeGbp": "0.00",
           "assistsGbp": "0.00",
           "allocatedFinancingFeeGbp": "0.00",
           "allocatedInlandVatAdjustmentGbp": "0.00",
-          "lineCustomsValueGbp": "3900.00",
+          "lineCustomsValueGbp": "5000.00",
           "lineDutyGbp": "0.00",
           "lineVatGbp": "0.00",
-          "supplierBorneDutyGbp": "312.00",
-          "supplierBorneVatGbp": "842.40",
-          "lineLandedCostExVatGbp": "3925.00",
-          "lineLandedCostGbp": "3925.00",
-          "landedCostPerUnit": "3.9250",
-          "landedCostPerUnitIncVat": "3.9250"
+          "supplierBorneDutyGbp": "400.00",
+          "supplierBorneVatGbp": "1080.00",
+          "lineLandedCostExVatGbp": "5000.00",
+          "lineLandedCostGbp": "5000.00",
+          "landedCostPerUnit": "5.0000",
+          "landedCostPerUnitIncVat": "5.0000"
         }
       ]
     }

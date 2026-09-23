@@ -49,6 +49,7 @@ const lineArb: fc.Arbitrary<LineInput> = fc.record({
   unitWeightKg: money3(20),
   unitVolumeCbm: money3(0.5),
   preferenceClaimed: fc.boolean(),
+  assistsGbp: money2(2000),
   tariff: measures.map((ms) => ({
     kind: 'MEASURES' as const,
     verifiedAt: '2026-09-01T00:00:00Z',
@@ -86,6 +87,12 @@ const quoteArb: fc.Arbitrary<QuoteInput> = fc.record({
   includeOriginFees: fc.boolean(),
   insurance: fc.option(fc.record({ premiumGbp: money2(100) }), { nil: null }),
   vatRegistered: fc.boolean(),
+  vatPostponed: fc.boolean(),
+  brokerDeferment: fc.option(
+    fc.record({ feePct: fc.constantFrom('0', '2.5', '3'), minimumGbp: money2(50) }),
+    { nil: null },
+  ),
+  inlandVatAdjustmentGbp: fc.option(money2(600), { nil: null }),
   platformFeeGbp: money2(50),
 });
 
@@ -119,6 +126,9 @@ describe('engine invariants (§5.10 property tests)', () => {
         expect(col((l) => l.allocatedDestinationFeesGbp)).toBe(q.totals.destinationFees);
         expect(col((l) => l.allocatedInsuranceGbp)).toBe(q.totals.insurancePremium);
         expect(col((l) => l.allocatedPlatformFeeGbp)).toBe(q.totals.platformFee);
+        expect(col((l) => l.assistsGbp)).toBe(q.totals.assistsGbp);
+        expect(col((l) => l.allocatedFinancingFeeGbp)).toBe(q.totals.financingFee);
+        expect(col((l) => l.allocatedInlandVatAdjustmentGbp)).toBe(q.totals.inlandVatAdjustment);
         expect(col((l) => l.lineLandedCostExVatGbp)).toBe(q.totals.totalLandedCostExVat);
         expect(col((l) => l.lineLandedCostGbp)).toBe(q.totals.totalLandedCost);
         // The headline number is exactly its components.
@@ -130,6 +140,8 @@ describe('engine invariants (§5.10 property tests)', () => {
           D(q.totals.insurancePremium),
           D(q.totals.totalDuty),
           D(q.totals.platformFee),
+          D(q.totals.assistsGbp),
+          D(q.totals.financingFee),
         ]).toFixed(2);
         expect(components).toBe(q.totals.totalLandedCostExVat);
         expect(D(q.totals.totalLandedCostExVat).plus(D(q.totals.totalVat)).toFixed(2)).toBe(
@@ -161,13 +173,23 @@ describe('engine invariants (§5.10 property tests)', () => {
     );
   });
 
-  it('total landed cost is monotonic non-decreasing in quantity', () => {
+  // Holds when every line carries the same tariff. With mixed duty/VAT rates, adding units to a
+  // low-rate line legitimately shifts shared costs (freight, inland VAT adjustment) off a
+  // high-rate line and total tax can fall. Per-line penny rounding is allowed for.
+  it('total landed cost is monotonic non-decreasing in quantity (uniform tariff)', () => {
     fc.assert(
       fc.property(
         quoteArb,
         fc.integer({ min: 0, max: 5 }),
         fc.integer({ min: 1, max: 1000 }),
-        (input, idx, extra) => {
+        (raw, idx, extra) => {
+          const first = raw.lines[0];
+          if (!first) return;
+          const input: QuoteInput = {
+            ...raw,
+            lines: raw.lines.map((l) => ({ ...l, tariff: first.tariff, currency: first.currency })),
+          };
+          const tolerance = D('0.01').times(input.lines.length * 3);
           const i = idx % input.lines.length;
           const target = input.lines[i];
           if (!target) return;
@@ -180,11 +202,15 @@ describe('engine invariants (§5.10 property tests)', () => {
           const a = computeQuote(input);
           const b = computeQuote(bumped);
           if (!a.ok || !b.ok) return;
-          expect(D(b.quote.totals.totalLandedCost).gte(D(a.quote.totals.totalLandedCost))).toBe(
-            true,
-          );
           expect(
-            D(b.quote.totals.totalLandedCostExVat).gte(D(a.quote.totals.totalLandedCostExVat)),
+            D(b.quote.totals.totalLandedCost)
+              .plus(tolerance)
+              .gte(D(a.quote.totals.totalLandedCost)),
+          ).toBe(true);
+          expect(
+            D(b.quote.totals.totalLandedCostExVat)
+              .plus(tolerance)
+              .gte(D(a.quote.totals.totalLandedCostExVat)),
           ).toBe(true);
         },
       ),
@@ -202,6 +228,49 @@ describe('engine invariants (§5.10 property tests)', () => {
         if (input.lines.some((l) => !l.hsCodeVerified)) expect(r.quote.status).toBe('INDICATIVE');
       }),
       { numRuns: 200 },
+    );
+  });
+
+  it('postponed VAT changes cash at the border, never the VAT or duty itself', () => {
+    fc.assert(
+      fc.property(quoteArb, (input) => {
+        const a = computeQuote({
+          ...input,
+          vatRegistered: true,
+          vatPostponed: false,
+          brokerDeferment: null,
+        });
+        const b = computeQuote({
+          ...input,
+          vatRegistered: true,
+          vatPostponed: true,
+          brokerDeferment: null,
+        });
+        if (!a.ok || !b.ok) return;
+        expect(b.quote.totals.totalVat).toBe(a.quote.totals.totalVat);
+        expect(b.quote.totals.totalLandedCost).toBe(a.quote.totals.totalLandedCost);
+        expect(D(b.quote.totals.borderOutlay).lte(D(a.quote.totals.borderOutlay))).toBe(true);
+      }),
+      { numRuns: 150 },
+    );
+  });
+
+  it('assists never lower duty and always raise the customs value by exactly their amount', () => {
+    fc.assert(
+      fc.property(quoteArb, (input) => {
+        const without = computeQuote({
+          ...input,
+          lines: input.lines.map((l) => ({ ...l, assistsGbp: '0' })),
+        });
+        const withA = computeQuote(input);
+        if (!without.ok || !withA.ok) return;
+        const added = sum(input.lines.map((l) => D(l.assistsGbp ?? '0'))).toFixed(2);
+        expect(
+          D(withA.quote.totals.customsValue).minus(D(without.quote.totals.customsValue)).toFixed(2),
+        ).toBe(added);
+        expect(D(withA.quote.totals.totalDuty).gte(D(without.quote.totals.totalDuty))).toBe(true);
+      }),
+      { numRuns: 150 },
     );
   });
 
