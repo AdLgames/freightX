@@ -1,0 +1,22 @@
+{
+  "id": "{{EVENT_ID}}",
+  "object": "event",
+  "api_version": "2026-08-26.dahlia",
+  "created": 1790000700,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": { "id": null, "idempotency_key": null },
+  "type": "charge.succeeded",
+  "data": {
+    "object": {
+      "id": "ch_FixtureCharge001",
+      "object": "charge",
+      "customer": "{{CUSTOMER_ID}}",
+      "amount": 2900,
+      "currency": "gbp",
+      "status": "succeeded",
+      "livemode": false,
+      "metadata": {}
+    }
+  }
+}

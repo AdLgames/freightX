@@ -81,7 +81,10 @@ export type AlertCode =
   | 'FX_ECB_FETCH_FAILED'
   | 'FX_ECB_PARSE_FAILED'
   | 'TARIFF_REFRESH_DEGRADED'
-  | 'JOB_FAILED';
+  | 'JOB_FAILED'
+  // M6: a Stripe webhook event exhausted its attempts (dead-letter, brief §6.4).
+  | 'STRIPE_EVENT_DEAD_LETTERED';
+// end M6
 
 export interface AlertSink {
   alert(

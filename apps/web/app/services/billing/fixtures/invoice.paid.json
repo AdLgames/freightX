@@ -1,0 +1,37 @@
+{
+  "id": "{{EVENT_ID}}",
+  "object": "event",
+  "api_version": "2026-08-26.dahlia",
+  "created": 1790000600,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": { "id": null, "idempotency_key": null },
+  "type": "invoice.paid",
+  "data": {
+    "object": {
+      "id": "in_FixtureInvoice002",
+      "object": "invoice",
+      "customer": "{{CUSTOMER_ID}}",
+      "customer_email": "{{EMAIL}}",
+      "status": "paid",
+      "attempt_count": 2,
+      "attempted": true,
+      "billing_reason": "subscription_cycle",
+      "collection_method": "charge_automatically",
+      "currency": "gbp",
+      "amount_due": 2900,
+      "amount_paid": 2900,
+      "amount_remaining": 0,
+      "hosted_invoice_url": "https://invoice.stripe.com/i/acct_fixture/in_FixtureInvoice002",
+      "livemode": false,
+      "parent": {
+        "type": "subscription_details",
+        "quote_details": null,
+        "subscription_details": {
+          "subscription": "{{SUBSCRIPTION_ID}}",
+          "metadata": { "organizationId": "{{ORG_ID}}", "plan": "STARTER" }
+        }
+      }
+    }
+  }
+}

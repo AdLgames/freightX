@@ -20,6 +20,9 @@ import {
   type QueueName,
 } from './queues.js';
 import { buildWiring, readEnv, type JobSummary } from './wiring.server.js';
+// M6
+import { STRIPE_EVENTS_QUEUE } from './jobs/stripe-events.js';
+// end M6
 
 interface LastRun {
   at: string;
@@ -157,6 +160,52 @@ const startWorker = async (): Promise<void> => {
     worker.on('error', (err) => log('worker.error', { queue: name, ...errorFields(err) }));
     workers.push(worker);
   }
+
+  // M6: opt-in consumer for the event-driven stripe-events queue (no scheduler: the web app's
+  // POST /webhooks/stripe enqueues). Off by default because the web app consumes it today.
+  if (env.STRIPE_EVENTS_CONSUMER === 'worker') {
+    const stripeWorker = new Worker(
+      STRIPE_EVENTS_QUEUE,
+      async (job: Job) => {
+        log('job.started', {
+          queue: STRIPE_EVENTS_QUEUE,
+          jobId: job.id,
+          jobName: job.name,
+          attempt: job.attemptsMade + 1,
+        });
+        return wiring.runStripeEvent(job.data);
+      },
+      { connection, concurrency: 1 },
+    );
+    stripeWorker.on('completed', (job, result) => {
+      log('job.completed', { queue: STRIPE_EVENTS_QUEUE, jobId: job.id, summary: result });
+    });
+    stripeWorker.on('failed', (job, err) => {
+      const attempt = job?.attemptsMade ?? 0;
+      const attempts = job?.opts.attempts ?? 1;
+      log('job.failed', {
+        queue: STRIPE_EVENTS_QUEUE,
+        jobId: job?.id,
+        attempt,
+        attempts,
+        ...errorFields(err),
+      });
+      if (attempt >= attempts) {
+        void wiring.ports.alerts.alert(
+          'critical',
+          'STRIPE_EVENT_DEAD_LETTERED',
+          `stripe-events job exhausted its ${attempts} attempts`,
+          { queue: STRIPE_EVENTS_QUEUE, jobId: job?.id, error: err.message },
+        );
+      }
+    });
+    stripeWorker.on('error', (err) =>
+      log('worker.error', { queue: STRIPE_EVENTS_QUEUE, ...errorFields(err) }),
+    );
+    workers.push(stripeWorker);
+    log('worker.stripe_events_consumer', { queue: STRIPE_EVENTS_QUEUE });
+  }
+  // end M6
 
   const report = (): HealthReport => ({
     ok: true,

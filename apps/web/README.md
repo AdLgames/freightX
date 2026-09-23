@@ -231,13 +231,86 @@ Passkeys and TOTP (§7.1), invalidating sessions on email change (no email chang
 settings wizard (M2), recent drafts / quick duty check on Home (M4). Magic-link rows are not yet
 cleaned up (TODO for the worker, see packages/db README).
 
+## Billing (M6)
+
+Stripe Billing subscriptions (brief §3), OWNER only (§7.2 `billing.manage`). Files:
+`routes/app.settings_.billing.tsx` (page + checkout/portal actions), `routes/app.settings_.billing_.success.tsx`,
+`routes/webhooks.stripe.tsx` (public resource route), `services/billing/*`, `validators/billing.ts`,
+`components/plan-notice.tsx`, migration `0006_billing`.
+
+### Environment
+
+| Variable                                    | Effect when set                                                            | When unset                                                                 |
+| ------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `STRIPE_SECRET_KEY`                         | `StripeGateway` (API version pinned in `stripe.server.ts`)                 | billing page says "Billing is not configured"; everything else unchanged   |
+| `STRIPE_PRICE_STARTER` / `STRIPE_PRICE_PRO` | the Stripe price ids for the two paid plans (`price_…`)                    | same as above (both are required for checkout)                             |
+| `STRIPE_WEBHOOK_SECRET`                     | `POST /webhooks/stripe` verifies signatures with it                        | the webhook answers 503 so Stripe keeps retrying                           |
+| `REDIS_URL`                                 | webhook events go on the BullMQ `stripe-events` queue, consumed in-process | events are processed inline before the 200 (logged `billing.event_inline`) |
+
+Plan names and prices are **read from Stripe** (`prices.retrieve` with the product expanded, cached
+5 minutes) and never written in code. `billing.configured` at startup reports presence only.
+
+### Flow
+
+1. `/app/settings/billing` shows the effective plan (`Organization.plan`), status, renewal date and,
+   while the organisation has no subscription, "Choose Starter" / "Choose Pro". The POST (CSRF)
+   creates the Stripe customer on first use (`metadata.organizationId`, the owner's address as
+   billing email, stored lower-cased in `billingEmail` — PII, never logged), then a Checkout Session
+   (`mode: subscription`, `client_reference_id = organizationId`, the same id in `subscription_data.metadata`,
+   `allow_promotion_codes`), audits `billing.checkout_started` and redirects. "Manage subscription"
+   creates a Billing Portal session (return URL = the page), audits `billing.portal_opened` and redirects.
+2. `/app/settings/billing/success?session_id=` retrieves the session server-side and 404s unless its
+   `client_reference_id` is this organisation. It only confirms; the webhook is the source of truth.
+3. `POST /webhooks/stripe` (no CSRF — signature-authenticated; outside `/app`): body ≤ 256 KB (413),
+   `Stripe-Signature` required (400), verified with `stripe.webhooks.constructEvent` (HMAC, constant-time,
+   300 s replay window → 400), then one `stripe_events` row per event id (`ON CONFLICT DO NOTHING`:
+   a duplicate delivery is 200 and a no-op), enqueue, 200.
+4. Processor (`services/billing/events.server.ts`, pure over `BillingRepository`): `checkout.session.completed`
+   links customer/subscription/email; `customer.subscription.created|updated` maps price id → plan
+   and Stripe status → `SubscriptionStatus`, sets `currentPeriodEnd`/`cancelAtPeriodEnd` (PAST_DUE
+   keeps the plan; canceled/unpaid/incomplete/paused → FREE); `…deleted` → FREE + CANCELED;
+   `invoice.payment_failed` → PAST_DUE and emails every OWNER "Payment failed — update your card"
+   with a link to the billing page; `invoice.paid` clears PAST_DUE. Unknown types are marked
+   processed and ignored. Every change writes audit `billing.subscription_updated` with
+   `{ plan, status }` only. The organisation comes only from the event's `client_reference_id` /
+   `metadata.organizationId`; a customer that does not match the organisation's, or a missing id,
+   is recorded as `unresolved: …` on the row and never applied (no cross-tenant lookups).
+   A thrown error (unmapped price id, database down) is recorded in `stripe_events.error`, the
+   claim is released on the inline path (Stripe redelivers), and on BullMQ the job retries 5×
+   then is kept in `failed` and logged as `billing.event_dead_lettered` (error level).
+5. Gating: `requirePlan(ctx, 'STARTER')` (402 page) and `currentPlan(ctx)` in
+   `services/billing/plan.server.ts`; `planAllows(plan, feature, count)`, `minimumPlanFor` and the
+   provisional `PLAN_LIMITS` table in `plan.ts` (decision (z)); `<PlanNotice feature requiredPlan/>`
+   renders "Upgrade to Starter to save more than 3 quotes." Not wired into other milestones' routes.
+
+### Local development
+
+```sh
+stripe login
+stripe listen --forward-to localhost:5173/webhooks/stripe     # prints whsec_… → STRIPE_WEBHOOK_SECRET
+stripe prices list                                             # → STRIPE_PRICE_STARTER / STRIPE_PRICE_PRO
+stripe trigger customer.subscription.updated                   # or complete a checkout with a test card
+```
+
+Test cards (Stripe test mode): `4242 4242 4242 4242` succeeds; `4000 0000 0000 0341` attaches but
+fails the first invoice (exercises `invoice.payment_failed`); `4000 0000 0000 3220` requires 3-D
+Secure. Any future expiry, any CVC. Test-mode price ids start with `price_` like live ones — keep
+the two environments' keys apart (§7.6).
+
+Tests: `services/billing/*.test.ts` and `validators/billing.test.ts` need no database; the
+`fixtures/` are hand-authored in Stripe's documented shape (see their README) and substituted per
+test organisation. `routes/webhooks.stripe.db.test.ts` and `routes/app.settings_.billing.db.test.ts`
+run with `DATABASE_URL` (superuser or `harbour_app` member) on a `FakeBillingGateway`, covering
+signature/size/replay/duplicate rules, OWNER-vs-ADMIN, CSRF, audit rows, the cross-tenant negative
+and a no-PII log snapshot.
+
 ## Phase 1 TODO (not built — brief §2, §7)
 
 - Auth: passkeys (WebAuthn), optional TOTP.
 - Products, suppliers, HS code verification stored as `hsCodeVerifiedAt`.
 - Saved quotes: persist `QuoteResult` snapshots, `ACCEPTED` immutability, hourly expiry job.
 - Document vault: presigned uploads, AV scan, magic-byte checks.
-- Stripe Billing subscription and plan gating.
+- ~~Stripe Billing subscription and plan gating~~ (M6, see "Billing (M6)").
 - Worker (`apps/worker`): HMRC/ECB FX jobs, tariff cache refresh, quote expiry.
 - SeaRates behind `ResilientFreightProvider` with the rate sheet as fallback and outlier checks.
 

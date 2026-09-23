@@ -72,6 +72,21 @@ const envSchema = z
     INLAND_VAT_ADJUSTMENT_LCL_GBP: gbpEnv.optional(),
     INLAND_VAT_ADJUSTMENT_FCL_GBP: gbpEnv.optional(),
     INLAND_VAT_ADJUSTMENT_AIR_GBP: gbpEnv.optional(),
+    // M6: Stripe Billing (services/billing/). All optional: unset → the billing page says
+    // "Billing is not configured" and nothing else changes. Secrets are never logged. Plan names
+    // and prices live in Stripe; the two price ids are the only link between a Stripe price and
+    // our Plan enum (STARTER / PRO).
+    STRIPE_SECRET_KEY: z.string().min(1).max(1024).optional(),
+    STRIPE_WEBHOOK_SECRET: z.string().min(1).max(1024).optional(),
+    STRIPE_PRICE_STARTER: z
+      .string()
+      .regex(/^price_[A-Za-z0-9]+$/, 'STRIPE_PRICE_STARTER must be a Stripe price id (price_…).')
+      .optional(),
+    STRIPE_PRICE_PRO: z
+      .string()
+      .regex(/^price_[A-Za-z0-9]+$/, 'STRIPE_PRICE_PRO must be a Stripe price id (price_…).')
+      .optional(),
+    // end M6
   })
   .refine(
     (e) => (e.TRADE_TARIFF_API_KEY === undefined) === (e.TRADE_TARIFF_API_KEY_HEADER === undefined),
@@ -108,6 +123,12 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     INLAND_VAT_ADJUSTMENT_LCL_GBP: blank(source.INLAND_VAT_ADJUSTMENT_LCL_GBP),
     INLAND_VAT_ADJUSTMENT_FCL_GBP: blank(source.INLAND_VAT_ADJUSTMENT_FCL_GBP),
     INLAND_VAT_ADJUSTMENT_AIR_GBP: blank(source.INLAND_VAT_ADJUSTMENT_AIR_GBP),
+    // M6
+    STRIPE_SECRET_KEY: blank(source.STRIPE_SECRET_KEY),
+    STRIPE_WEBHOOK_SECRET: blank(source.STRIPE_WEBHOOK_SECRET),
+    STRIPE_PRICE_STARTER: blank(source.STRIPE_PRICE_STARTER),
+    STRIPE_PRICE_PRO: blank(source.STRIPE_PRICE_PRO),
+    // end M6
   });
   return {
     ...parsed,

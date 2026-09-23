@@ -71,6 +71,9 @@ export {
   DocumentStatus,
   PaymentMethod,
   Role as PrismaRole,
+  // M6
+  SubscriptionStatus,
+  // end M6
 } from '../generated/client/index.js';
 export type {
   PrismaClient,
@@ -92,4 +95,7 @@ export type {
   OutboxEvent,
   TariffCache,
   FxRate,
+  // M6
+  StripeEvent,
+  // end M6
 } from '../generated/client/index.js';

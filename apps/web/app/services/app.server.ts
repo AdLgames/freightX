@@ -16,6 +16,9 @@ import { createRedisClient } from './redis.server';
 import { createTariffClient } from './tariff.server';
 import { createTurnstile, type TurnstileVerifier } from './turnstile.server';
 import { createAuthServices, type AuthServices } from './workspace.server';
+// M6
+import { createBillingServices, type BillingServices } from './billing/billing.server';
+// end M6
 
 /**
  * Composition root. Built once per process (memoised on `globalThis` so `react-router dev`
@@ -40,6 +43,9 @@ export interface AppServices {
   startedAt: Date;
   /** Sign-in, sessions and the workspace's database access (M1). See workspace.server.ts. */
   auth: AuthServices;
+  // M6: Stripe Billing (gateway, webhook queue, plan prices). See billing/billing.server.ts.
+  billing: BillingServices;
+  // end M6
 }
 
 export interface AppOverrides {
@@ -86,6 +92,16 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     now,
   });
   const fx = await seedFxStore({ store: stores.fxStore, csvPath: env.FX_SEED_CSV, logger, now });
+  // M6
+  const billing = await createBillingServices({
+    env,
+    logger,
+    prisma: auth.prisma,
+    email: auth.email,
+    appUrl: auth.appUrl,
+    now,
+  });
+  // end M6
 
   logger.info('app.started', {
     nodeEnv: env.NODE_ENV,
@@ -119,6 +135,9 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     calcVersion: CALC_VERSION,
     startedAt,
     auth,
+    // M6
+    billing,
+    // end M6
   };
 };
 

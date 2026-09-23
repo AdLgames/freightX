@@ -54,6 +54,14 @@ Copy `.env.example` to `.env` for local work. Prisma reads `DATABASE_URL` from i
 prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <shadow>
 --script`. Sessions live in Redis, so the only change is an index for the magic-link cleanup
   below.
+- `0006_billing` (M6) = generated DDL (part 1, `migrate diff --from-migrations … --shadow-database-url`)
+  followed by a hand-written, idempotent part 2. Adds enum `subscription_status`, the subscription
+  columns on `organizations` (`stripe_subscription_id` unique, `subscription_status` default `NONE`,
+  `current_period_end`, `cancel_at_period_end`, `billing_email` with a lower-case CHECK,
+  `plan_updated_at`) and the global table `stripe_events` (webhook idempotency: Stripe event id PK,
+  type, received/processed timestamps, last error, payload sha256 — never the payload). `StripeEvent`
+  is a `PASSTHROUGH_MODELS` entry (no organisation until processed, no RLS), granted to `harbour_app`.
+  `billing_email` is PII like the EORI: never logged, never in audit metadata. Independent of 0005.
 - **Shadow database (fixed).** 0002's `REVOKE ... "_prisma_migrations"` is guarded with
   `to_regclass`, so `migrate dev` and `migrate diff --from-migrations` can replay all migrations
   into a shadow database. The guard was added before any non-throwaway database applied 0002.

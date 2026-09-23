@@ -2,6 +2,10 @@ import type { JobsOptions } from 'bullmq';
 
 /** Queue names. One queue per job type so each can be paused/drained independently. */
 export const QUEUE_NAMES = ['fx-refresh', 'tariff-refresh', 'quote-expiry'] as const;
+// M6: the event-driven `stripe-events` queue is NOT in QUEUE_NAMES (no cron schedule; the web app
+// enqueues, and consumes it too unless STRIPE_EVENTS_CONSUMER=worker). See jobs/stripe-events.ts.
+export { STRIPE_EVENTS_QUEUE, STRIPE_EVENT_JOB_OPTIONS } from './jobs/stripe-events.js';
+// end M6
 export type QueueName = (typeof QUEUE_NAMES)[number];
 
 export const isQueueName = (s: string): s is QueueName =>
