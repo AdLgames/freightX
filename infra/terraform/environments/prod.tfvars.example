@@ -1,0 +1,13 @@
+# Production values. Separate Cloudflare account or at least separate API token from dev
+# (brief §7.6: separate credentials per environment).
+
+environment           = "prod"
+cloudflare_account_id = "<32-hex cloudflare account id>"
+bucket_name           = "harbour-documents"
+region                = "weur"
+jurisdiction          = "eu"
+
+tags = {
+  owner = "<team or person>"
+  cost  = "prod"
+}

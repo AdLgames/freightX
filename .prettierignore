@@ -1,0 +1,8 @@
+node_modules
+dist
+build
+.react-router
+pnpm-lock.yaml
+packages/db/generated
+packages/db/prisma/migrations
+docs/engineering-brief.md

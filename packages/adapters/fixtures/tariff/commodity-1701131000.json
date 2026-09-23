@@ -1,0 +1,186 @@
+{
+  "data": {
+    "id": "12345",
+    "type": "commodity",
+    "attributes": {
+      "producline_suffix": "80",
+      "description": "Raw cane sugar, for refining",
+      "number_indents": 3,
+      "goods_nomenclature_item_id": "1701131000",
+      "bti_url": "",
+      "formatted_description": "Raw cane sugar, for refining",
+      "declarable": true,
+      "basic_duty_rate": null
+    },
+    "relationships": {
+      "import_measures": {
+        "data": [
+          {
+            "id": "20005",
+            "type": "measure"
+          },
+          {
+            "id": "-1003",
+            "type": "measure"
+          }
+        ]
+      },
+      "export_measures": {
+        "data": []
+      }
+    }
+  },
+  "included": [
+    {
+      "id": "20005",
+      "type": "measure",
+      "attributes": {
+        "id": 20005,
+        "origin": "uk",
+        "effective_start_date": "2021-01-01T00:00:00.000Z",
+        "effective_end_date": null,
+        "import": true,
+        "vat": false,
+        "excise": false
+      },
+      "relationships": {
+        "duty_expression": {
+          "data": {
+            "id": "20005-duty_expression",
+            "type": "duty_expression"
+          }
+        },
+        "measure_type": {
+          "data": {
+            "id": "103",
+            "type": "measure_type"
+          }
+        },
+        "geographical_area": {
+          "data": {
+            "id": "1011",
+            "type": "geographical_area"
+          }
+        },
+        "additional_code": {
+          "data": null
+        },
+        "excluded_countries": {
+          "data": []
+        }
+      }
+    },
+    {
+      "id": "-1003",
+      "type": "measure",
+      "attributes": {
+        "id": -1003,
+        "origin": "uk",
+        "effective_start_date": "2021-01-01T00:00:00.000Z",
+        "effective_end_date": null,
+        "import": true,
+        "vat": true,
+        "excise": false
+      },
+      "relationships": {
+        "duty_expression": {
+          "data": {
+            "id": "-1003-duty_expression",
+            "type": "duty_expression"
+          }
+        },
+        "measure_type": {
+          "data": {
+            "id": "305",
+            "type": "measure_type"
+          }
+        },
+        "geographical_area": {
+          "data": {
+            "id": "1011",
+            "type": "geographical_area"
+          }
+        },
+        "additional_code": {
+          "data": null
+        },
+        "excluded_countries": {
+          "data": []
+        }
+      }
+    },
+    {
+      "id": "20005-duty_expression",
+      "type": "duty_expression",
+      "attributes": {
+        "base": "\u00a3 339.00 / 1000 kg",
+        "formatted_base": "\u00a3 339.00 / 1000 kg",
+        "verbose_duty": "\u00a3339.00/1000kg"
+      }
+    },
+    {
+      "id": "-1003-duty_expression",
+      "type": "duty_expression",
+      "attributes": {
+        "base": "0.00 %",
+        "formatted_base": "0.00</span> %",
+        "verbose_duty": "0.00%"
+      }
+    },
+    {
+      "id": "1011",
+      "type": "geographical_area",
+      "attributes": {
+        "id": "1011",
+        "description": "ERGA OMNES",
+        "geographical_area_id": "1011"
+      },
+      "relationships": {
+        "children_geographical_areas": {
+          "data": [
+            {
+              "id": "CN",
+              "type": "geographical_area"
+            },
+            {
+              "id": "US",
+              "type": "geographical_area"
+            },
+            {
+              "id": "IN",
+              "type": "geographical_area"
+            },
+            {
+              "id": "TR",
+              "type": "geographical_area"
+            },
+            {
+              "id": "VN",
+              "type": "geographical_area"
+            },
+            {
+              "id": "BR",
+              "type": "geographical_area"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "103",
+      "type": "measure_type",
+      "attributes": {
+        "id": "103",
+        "description": "Third country duty"
+      }
+    },
+    {
+      "id": "305",
+      "type": "measure_type",
+      "attributes": {
+        "id": "305",
+        "description": "Value added tax"
+      }
+    }
+  ]
+}

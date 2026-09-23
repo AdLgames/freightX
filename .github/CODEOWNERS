@@ -1,0 +1,20 @@
+# Code owners — reviews are requested automatically for matching paths.
+# Branch protection should require review from code owners AND two approvals for the
+# paths below (money and migrations). See CONTRIBUTING.md.
+#
+# TODO: replace the placeholder handles with real GitHub handles/teams.
+
+# Landed-cost engine: any formula change needs two reviewers and a calcVersion bump.
+packages/engine/                        @harbour-placeholder/engine-owner-1 @harbour-placeholder/engine-owner-2
+
+# Golden fixtures additionally need customs-practitioner sign-off (see CONTRIBUTING.md).
+packages/engine/fixtures/               @harbour-placeholder/engine-owner-1 @harbour-placeholder/engine-owner-2
+
+# Database migrations: two reviewers, rollback note, snapshot ID for destructive changes (brief §4).
+packages/db/prisma/migrations/          @harbour-placeholder/db-owner-1 @harbour-placeholder/db-owner-2
+packages/db/prisma/schema.prisma        @harbour-placeholder/db-owner-1 @harbour-placeholder/db-owner-2
+
+# Security-sensitive configuration.
+.github/                                @harbour-placeholder/db-owner-1
+infra/                                  @harbour-placeholder/db-owner-1
+SECURITY.md                             @harbour-placeholder/db-owner-1

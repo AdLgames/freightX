@@ -1,0 +1,68 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Harbour dependency policy (engineering brief §7.6): weekly, grouped non-major updates, majors separate, lockfile maintenance, security alerts, pinned GitHub Action digests.",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", ":semanticCommits"],
+  "timezone": "Europe/London",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "rangeStrategy": "bump",
+  "separateMajorMinor": true,
+  "separateMultipleMajor": true,
+  "dependencyDashboard": true,
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "description": "Group all minor and patch updates into one weekly PR",
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch"
+    },
+    {
+      "description": "Major updates get their own PR each",
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["major"]
+    },
+    {
+      "description": "ADR-0001: Prisma is pinned to 6.19.x. Major bumps are opened for visibility but need an ADR update before merge.",
+      "matchPackageNames": ["prisma", "@prisma/client"],
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["needs-adr"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "ADR-0002: React Router stays on 7.x framework mode until an upgrade ADR is written.",
+      "matchPackageNames": [
+        "react-router",
+        "@react-router/dev",
+        "@react-router/node",
+        "@react-router/serve",
+        "@react-router/fs-routes"
+      ],
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["needs-adr"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Node engine range is managed by hand (engines.node in package.json)",
+      "matchPackageNames": ["node"],
+      "enabled": false
+    },
+    {
+      "description": "Container images in Terraform/CI (postgres, redis) — pin by digest, separate PR",
+      "matchDatasources": ["docker"],
+      "pinDigests": true,
+      "groupName": "container images"
+    }
+  ]
+}

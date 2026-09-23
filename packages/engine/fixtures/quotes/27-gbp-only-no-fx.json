@@ -1,0 +1,132 @@
+{
+  "name": "27-gbp-only-no-fx",
+  "notes": "GBP-priced line: no FX needed, fxRate 1, fxSnapshots empty.",
+  "input": {
+    "incoterm": "EXW",
+    "mode": "SEA_LCL",
+    "originCountry": "CN",
+    "originPort": "CNSHA",
+    "destinationPort": "GBFXT",
+    "lines": [
+      {
+        "ref": "SKU-1",
+        "hsCode": "9503004100",
+        "hsCodeVerified": true,
+        "originCountry": "CN",
+        "quantity": 1000,
+        "unitValue": "3.90",
+        "currency": "GBP",
+        "unitWeightKg": "0.5",
+        "unitVolumeCbm": "0.002",
+        "tariff": {
+          "kind": "MEASURES",
+          "verifiedAt": "2026-09-01T00:00:00Z",
+          "measures": [
+            {
+              "sid": "tc8",
+              "measureTypeId": "103",
+              "dutyExpression": "8.00 %",
+              "geographicalAreaId": "1011"
+            },
+            {
+              "sid": "v20",
+              "measureTypeId": "305",
+              "dutyExpression": "20.00 %",
+              "geographicalAreaId": "1011"
+            }
+          ]
+        }
+      }
+    ],
+    "fx": {
+      "rates": {}
+    },
+    "freight": {
+      "source": "RATE_SHEET_V1",
+      "fetchedAt": "2026-09-10T10:00:00Z",
+      "toBorderGbp": "400",
+      "postBorderGbp": "150",
+      "originFeesGbp": "120",
+      "destinationFeesGbp": "180",
+      "clearanceFeeGbp": "55"
+    },
+    "insurance": {
+      "premiumGbp": "20"
+    },
+    "vatRegistered": true
+  },
+  "expected": {
+    "ok": true,
+    "quote": {
+      "calcVersion": "1.0",
+      "status": "READY",
+      "warnings": [],
+      "incoterm": "EXW",
+      "mode": "SEA_LCL",
+      "apportionmentBasis": "SEA_WEIGHT_OR_MEASURE",
+      "fxRate": "1",
+      "fxSource": "HMRC_MONTHLY",
+      "fxDate": "2026-09-10",
+      "fxSnapshots": {},
+      "rateSource": "RATE_SHEET_V1",
+      "rateFetchedAt": "2026-09-10T10:00:00Z",
+      "validUntil": "2026-09-17T10:00:00.000Z",
+      "totals": {
+        "goodsValueGbp": "3900.00",
+        "freightCost": "550.00",
+        "freightToBorderGbp": "400.00",
+        "freightPostBorderGbp": "150.00",
+        "originFees": "120.00",
+        "destinationFees": "235.00",
+        "insurancePremium": "20.00",
+        "customsValue": "4440.00",
+        "totalDuty": "355.20",
+        "totalVat": "1036.04",
+        "vatRecoverable": true,
+        "platformFee": "0.00",
+        "totalLandedCostExVat": "5180.20",
+        "totalLandedCost": "6216.24",
+        "supplierBorneDuty": "0.00",
+        "supplierBorneVat": "0.00"
+      },
+      "lines": [
+        {
+          "ref": "SKU-1",
+          "hsCode": "9503004100",
+          "originCountry": "CN",
+          "quantity": 1000,
+          "unitValue": "3.9000",
+          "currency": "GBP",
+          "unitValueGbp": "3.9000",
+          "lineGoodsValueGbp": "3900.00",
+          "lineWeightKg": "500.000",
+          "lineVolumeCbm": "2.0000",
+          "chargeableWeight": "2.0000",
+          "tariffMeasureId": "tc8",
+          "dutyType": "AD_VALOREM",
+          "dutyRatePct": "8.0000",
+          "dutySpecific": null,
+          "preferenceClaimed": false,
+          "addRatePct": null,
+          "vatRatePct": "20.00",
+          "allocatedFreightGbp": "550.00",
+          "allocatedFreightToBorderGbp": "400.00",
+          "allocatedFreightPostBorderGbp": "150.00",
+          "allocatedOriginFeesGbp": "120.00",
+          "allocatedDestinationFeesGbp": "235.00",
+          "allocatedInsuranceGbp": "20.00",
+          "allocatedPlatformFeeGbp": "0.00",
+          "lineCustomsValueGbp": "4440.00",
+          "lineDutyGbp": "355.20",
+          "lineVatGbp": "1036.04",
+          "supplierBorneDutyGbp": "0.00",
+          "supplierBorneVatGbp": "0.00",
+          "lineLandedCostExVatGbp": "5180.20",
+          "lineLandedCostGbp": "6216.24",
+          "landedCostPerUnit": "5.1802",
+          "landedCostPerUnitIncVat": "6.2162"
+        }
+      ]
+    }
+  }
+}

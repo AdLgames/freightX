@@ -1,0 +1,67 @@
+{
+  "data": {
+    "id": "9503",
+    "type": "heading",
+    "attributes": {
+      "goods_nomenclature_item_id": "9503000000",
+      "description": "Tricycles, scooters, pedal cars and similar wheeled toys; dolls; other toys"
+    }
+  },
+  "included": [
+    {
+      "id": "1",
+      "type": "commodity",
+      "attributes": {
+        "goods_nomenclature_item_id": "9503001000",
+        "description": "Tricycles, scooters, pedal cars and similar wheeled toys; dolls' carriages",
+        "declarable": true,
+        "leaf": true,
+        "basic_duty_rate": "<span>0.00</span> %"
+      }
+    },
+    {
+      "id": "2",
+      "type": "commodity",
+      "attributes": {
+        "goods_nomenclature_item_id": "9503004100",
+        "description": "Stuffed dolls representing only human beings",
+        "declarable": true,
+        "leaf": true,
+        "basic_duty_rate": "<span>0.00</span> %"
+      }
+    },
+    {
+      "id": "3",
+      "type": "commodity",
+      "attributes": {
+        "goods_nomenclature_item_id": "9503004900",
+        "description": "Other dolls",
+        "declarable": true,
+        "leaf": true,
+        "basic_duty_rate": "<span>0.00</span> %"
+      }
+    },
+    {
+      "id": "4",
+      "type": "commodity",
+      "attributes": {
+        "goods_nomenclature_item_id": "9503004000",
+        "description": "Dolls representing only human beings (group)",
+        "declarable": false,
+        "leaf": false,
+        "basic_duty_rate": null
+      }
+    },
+    {
+      "id": "5",
+      "type": "commodity",
+      "attributes": {
+        "goods_nomenclature_item_id": "9503007000",
+        "description": "Other toys, put up in sets or outfits",
+        "declarable": true,
+        "leaf": true,
+        "basic_duty_rate": "<span>4.70</span> %"
+      }
+    }
+  ]
+}

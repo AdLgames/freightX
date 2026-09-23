@@ -1,0 +1,31 @@
+{
+  "name": "@harbour/engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pure landed-cost engine: no I/O, takes resolved inputs, returns a QuoteResult",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "fixtures:update": "tsx scripts/update-golden.ts"
+  },
+  "dependencies": {
+    "decimal.js": "^10.6.0"
+  },
+  "devDependencies": {
+    "fast-check": "^4.10.2",
+    "tsx": "^4.23.0"
+  }
+}

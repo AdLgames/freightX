@@ -1,0 +1,336 @@
+{
+  "data": {
+    "id": "12345",
+    "type": "commodity",
+    "attributes": {
+      "producline_suffix": "80",
+      "description": "Bicycles and other cycles, not motorised, with ball bearings",
+      "number_indents": 3,
+      "goods_nomenclature_item_id": "8712003000",
+      "bti_url": "",
+      "formatted_description": "Bicycles and other cycles, not motorised, with ball bearings",
+      "declarable": true,
+      "basic_duty_rate": null
+    },
+    "relationships": {
+      "import_measures": {
+        "data": [
+          {
+            "id": "20002",
+            "type": "measure"
+          },
+          {
+            "id": "20003",
+            "type": "measure"
+          },
+          {
+            "id": "20004",
+            "type": "measure"
+          },
+          {
+            "id": "-1002",
+            "type": "measure"
+          }
+        ]
+      },
+      "export_measures": {
+        "data": []
+      }
+    }
+  },
+  "included": [
+    {
+      "id": "20002",
+      "type": "measure",
+      "attributes": {
+        "id": 20002,
+        "origin": "uk",
+        "effective_start_date": "2021-01-01T00:00:00.000Z",
+        "effective_end_date": null,
+        "import": true,
+        "vat": false,
+        "excise": false
+      },
+      "relationships": {
+        "duty_expression": {
+          "data": {
+            "id": "20002-duty_expression",
+            "type": "duty_expression"
+          }
+        },
+        "measure_type": {
+          "data": {
+            "id": "103",
+            "type": "measure_type"
+          }
+        },
+        "geographical_area": {
+          "data": {
+            "id": "1011",
+            "type": "geographical_area"
+          }
+        },
+        "additional_code": {
+          "data": null
+        },
+        "excluded_countries": {
+          "data": []
+        }
+      }
+    },
+    {
+      "id": "20003",
+      "type": "measure",
+      "attributes": {
+        "id": 20003,
+        "origin": "uk",
+        "effective_start_date": "2021-01-01T00:00:00.000Z",
+        "effective_end_date": null,
+        "import": true,
+        "vat": false,
+        "excise": false
+      },
+      "relationships": {
+        "duty_expression": {
+          "data": {
+            "id": "20003-duty_expression",
+            "type": "duty_expression"
+          }
+        },
+        "measure_type": {
+          "data": {
+            "id": "552",
+            "type": "measure_type"
+          }
+        },
+        "geographical_area": {
+          "data": {
+            "id": "CN",
+            "type": "geographical_area"
+          }
+        },
+        "additional_code": {
+          "data": {
+            "id": "C999",
+            "type": "additional_code"
+          }
+        },
+        "excluded_countries": {
+          "data": []
+        }
+      }
+    },
+    {
+      "id": "20004",
+      "type": "measure",
+      "attributes": {
+        "id": 20004,
+        "origin": "uk",
+        "effective_start_date": "2021-01-01T00:00:00.000Z",
+        "effective_end_date": null,
+        "import": true,
+        "vat": false,
+        "excise": false
+      },
+      "relationships": {
+        "duty_expression": {
+          "data": {
+            "id": "20004-duty_expression",
+            "type": "duty_expression"
+          }
+        },
+        "measure_type": {
+          "data": {
+            "id": "552",
+            "type": "measure_type"
+          }
+        },
+        "geographical_area": {
+          "data": {
+            "id": "CN",
+            "type": "geographical_area"
+          }
+        },
+        "additional_code": {
+          "data": {
+            "id": "C998",
+            "type": "additional_code"
+          }
+        },
+        "excluded_countries": {
+          "data": []
+        }
+      }
+    },
+    {
+      "id": "-1002",
+      "type": "measure",
+      "attributes": {
+        "id": -1002,
+        "origin": "uk",
+        "effective_start_date": "2021-01-01T00:00:00.000Z",
+        "effective_end_date": null,
+        "import": true,
+        "vat": true,
+        "excise": false
+      },
+      "relationships": {
+        "duty_expression": {
+          "data": {
+            "id": "-1002-duty_expression",
+            "type": "duty_expression"
+          }
+        },
+        "measure_type": {
+          "data": {
+            "id": "305",
+            "type": "measure_type"
+          }
+        },
+        "geographical_area": {
+          "data": {
+            "id": "1011",
+            "type": "geographical_area"
+          }
+        },
+        "additional_code": {
+          "data": null
+        },
+        "excluded_countries": {
+          "data": []
+        }
+      }
+    },
+    {
+      "id": "20002-duty_expression",
+      "type": "duty_expression",
+      "attributes": {
+        "base": "6.50 %",
+        "formatted_base": "6.50</span> %",
+        "verbose_duty": "6.50%"
+      }
+    },
+    {
+      "id": "20003-duty_expression",
+      "type": "duty_expression",
+      "attributes": {
+        "base": "48.50 %",
+        "formatted_base": "48.50</span> %",
+        "verbose_duty": "48.50%"
+      }
+    },
+    {
+      "id": "20004-duty_expression",
+      "type": "duty_expression",
+      "attributes": {
+        "base": "30.60 %",
+        "formatted_base": "30.60</span> %",
+        "verbose_duty": "30.60%"
+      }
+    },
+    {
+      "id": "-1002-duty_expression",
+      "type": "duty_expression",
+      "attributes": {
+        "base": "20.00 %",
+        "formatted_base": "20.00</span> %",
+        "verbose_duty": "20.00%"
+      }
+    },
+    {
+      "id": "1011",
+      "type": "geographical_area",
+      "attributes": {
+        "id": "1011",
+        "description": "ERGA OMNES",
+        "geographical_area_id": "1011"
+      },
+      "relationships": {
+        "children_geographical_areas": {
+          "data": [
+            {
+              "id": "CN",
+              "type": "geographical_area"
+            },
+            {
+              "id": "US",
+              "type": "geographical_area"
+            },
+            {
+              "id": "IN",
+              "type": "geographical_area"
+            },
+            {
+              "id": "TR",
+              "type": "geographical_area"
+            },
+            {
+              "id": "VN",
+              "type": "geographical_area"
+            },
+            {
+              "id": "BR",
+              "type": "geographical_area"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "CN",
+      "type": "geographical_area",
+      "attributes": {
+        "id": "CN",
+        "description": "China",
+        "geographical_area_id": "CN"
+      },
+      "relationships": {
+        "children_geographical_areas": {
+          "data": []
+        }
+      }
+    },
+    {
+      "id": "103",
+      "type": "measure_type",
+      "attributes": {
+        "id": "103",
+        "description": "Third country duty"
+      }
+    },
+    {
+      "id": "552",
+      "type": "measure_type",
+      "attributes": {
+        "id": "552",
+        "description": "Definitive anti-dumping duty"
+      }
+    },
+    {
+      "id": "305",
+      "type": "measure_type",
+      "attributes": {
+        "id": "305",
+        "description": "Value added tax"
+      }
+    },
+    {
+      "id": "C999",
+      "type": "additional_code",
+      "attributes": {
+        "code": "C999",
+        "formatted_code": "C999",
+        "description": "All other companies"
+      }
+    },
+    {
+      "id": "C998",
+      "type": "additional_code",
+      "attributes": {
+        "code": "C998",
+        "formatted_code": "C998",
+        "description": "Specific exporter"
+      }
+    }
+  ]
+}

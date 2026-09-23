@@ -1,0 +1,217 @@
+{
+  "name": "21-air-volumetric-apportionment",
+  "notes": "AIR: line HEAVY 100 × 2 kg = 200 kg, 100 × 0.001 CBM = 0.1 CBM → volumetric 16.67 kg → chargeable 200. Line BULKY 100 × 0.2 kg = 20 kg, 100 × 0.006 = 0.6 CBM → volumetric 100 kg → chargeable 100. Freight 900 split 2:1 = 600 / 300. Basis AIR_VOLUMETRIC_6000.",
+  "input": {
+    "incoterm": "EXW",
+    "mode": "AIR",
+    "originCountry": "CN",
+    "originPort": "CNPVG",
+    "destinationPort": "GBLHR",
+    "lines": [
+      {
+        "ref": "HEAVY",
+        "hsCode": "9503004100",
+        "hsCodeVerified": true,
+        "originCountry": "CN",
+        "quantity": 100,
+        "unitValue": "20",
+        "currency": "USD",
+        "unitWeightKg": "2",
+        "unitVolumeCbm": "0.001",
+        "tariff": {
+          "kind": "MEASURES",
+          "verifiedAt": "2026-09-01T00:00:00Z",
+          "measures": [
+            {
+              "sid": "tc8",
+              "measureTypeId": "103",
+              "dutyExpression": "8.00 %",
+              "geographicalAreaId": "1011"
+            },
+            {
+              "sid": "v20",
+              "measureTypeId": "305",
+              "dutyExpression": "20.00 %",
+              "geographicalAreaId": "1011"
+            }
+          ]
+        }
+      },
+      {
+        "ref": "BULKY",
+        "hsCode": "9503004100",
+        "hsCodeVerified": true,
+        "originCountry": "CN",
+        "quantity": 100,
+        "unitValue": "20",
+        "currency": "USD",
+        "unitWeightKg": "0.2",
+        "unitVolumeCbm": "0.006",
+        "tariff": {
+          "kind": "MEASURES",
+          "verifiedAt": "2026-09-01T00:00:00Z",
+          "measures": [
+            {
+              "sid": "tc8",
+              "measureTypeId": "103",
+              "dutyExpression": "8.00 %",
+              "geographicalAreaId": "1011"
+            },
+            {
+              "sid": "v20",
+              "measureTypeId": "305",
+              "dutyExpression": "20.00 %",
+              "geographicalAreaId": "1011"
+            }
+          ]
+        }
+      }
+    ],
+    "fx": {
+      "rates": {
+        "USD": {
+          "rateToGbp": "0.78",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        },
+        "EUR": {
+          "rateToGbp": "0.86",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        },
+        "CNY": {
+          "rateToGbp": "0.11",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        }
+      }
+    },
+    "freight": {
+      "source": "RATE_SHEET_V1",
+      "fetchedAt": "2026-09-10T10:00:00Z",
+      "toBorderGbp": "900",
+      "postBorderGbp": "0",
+      "originFeesGbp": "120",
+      "destinationFeesGbp": "180",
+      "clearanceFeeGbp": "55"
+    },
+    "insurance": null,
+    "vatRegistered": true
+  },
+  "expected": {
+    "ok": true,
+    "quote": {
+      "calcVersion": "1.0",
+      "status": "READY",
+      "warnings": [],
+      "incoterm": "EXW",
+      "mode": "AIR",
+      "apportionmentBasis": "AIR_VOLUMETRIC_6000",
+      "fxRate": "0.78",
+      "fxSource": "HMRC_MONTHLY",
+      "fxDate": "2026-09-01",
+      "fxSnapshots": {
+        "USD": {
+          "rateToGbp": "0.78",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        }
+      },
+      "rateSource": "RATE_SHEET_V1",
+      "rateFetchedAt": "2026-09-10T10:00:00Z",
+      "validUntil": "2026-09-17T10:00:00.000Z",
+      "totals": {
+        "goodsValueGbp": "3120.00",
+        "freightCost": "900.00",
+        "freightToBorderGbp": "900.00",
+        "freightPostBorderGbp": "0.00",
+        "originFees": "120.00",
+        "destinationFees": "235.00",
+        "insurancePremium": "0.00",
+        "customsValue": "4140.00",
+        "totalDuty": "331.20",
+        "totalVat": "941.24",
+        "vatRecoverable": true,
+        "platformFee": "0.00",
+        "totalLandedCostExVat": "4706.20",
+        "totalLandedCost": "5647.44",
+        "supplierBorneDuty": "0.00",
+        "supplierBorneVat": "0.00"
+      },
+      "lines": [
+        {
+          "ref": "HEAVY",
+          "hsCode": "9503004100",
+          "originCountry": "CN",
+          "quantity": 100,
+          "unitValue": "20.0000",
+          "currency": "USD",
+          "unitValueGbp": "15.6000",
+          "lineGoodsValueGbp": "1560.00",
+          "lineWeightKg": "200.000",
+          "lineVolumeCbm": "0.1000",
+          "chargeableWeight": "200.0000",
+          "tariffMeasureId": "tc8",
+          "dutyType": "AD_VALOREM",
+          "dutyRatePct": "8.0000",
+          "dutySpecific": null,
+          "preferenceClaimed": false,
+          "addRatePct": null,
+          "vatRatePct": "20.00",
+          "allocatedFreightGbp": "600.00",
+          "allocatedFreightToBorderGbp": "600.00",
+          "allocatedFreightPostBorderGbp": "0.00",
+          "allocatedOriginFeesGbp": "80.00",
+          "allocatedDestinationFeesGbp": "156.67",
+          "allocatedInsuranceGbp": "0.00",
+          "allocatedPlatformFeeGbp": "0.00",
+          "lineCustomsValueGbp": "2240.00",
+          "lineDutyGbp": "179.20",
+          "lineVatGbp": "515.17",
+          "supplierBorneDutyGbp": "0.00",
+          "supplierBorneVatGbp": "0.00",
+          "lineLandedCostExVatGbp": "2575.87",
+          "lineLandedCostGbp": "3091.04",
+          "landedCostPerUnit": "25.7587",
+          "landedCostPerUnitIncVat": "30.9104"
+        },
+        {
+          "ref": "BULKY",
+          "hsCode": "9503004100",
+          "originCountry": "CN",
+          "quantity": 100,
+          "unitValue": "20.0000",
+          "currency": "USD",
+          "unitValueGbp": "15.6000",
+          "lineGoodsValueGbp": "1560.00",
+          "lineWeightKg": "20.000",
+          "lineVolumeCbm": "0.6000",
+          "chargeableWeight": "100.0000",
+          "tariffMeasureId": "tc8",
+          "dutyType": "AD_VALOREM",
+          "dutyRatePct": "8.0000",
+          "dutySpecific": null,
+          "preferenceClaimed": false,
+          "addRatePct": null,
+          "vatRatePct": "20.00",
+          "allocatedFreightGbp": "300.00",
+          "allocatedFreightToBorderGbp": "300.00",
+          "allocatedFreightPostBorderGbp": "0.00",
+          "allocatedOriginFeesGbp": "40.00",
+          "allocatedDestinationFeesGbp": "78.33",
+          "allocatedInsuranceGbp": "0.00",
+          "allocatedPlatformFeeGbp": "0.00",
+          "lineCustomsValueGbp": "1900.00",
+          "lineDutyGbp": "152.00",
+          "lineVatGbp": "426.07",
+          "supplierBorneDutyGbp": "0.00",
+          "supplierBorneVatGbp": "0.00",
+          "lineLandedCostExVatGbp": "2130.33",
+          "lineLandedCostGbp": "2556.40",
+          "landedCostPerUnit": "21.3033",
+          "landedCostPerUnitIncVat": "25.5640"
+        }
+      ]
+    }
+  }
+}
