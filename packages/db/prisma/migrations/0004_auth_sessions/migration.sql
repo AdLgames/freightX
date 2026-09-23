@@ -1,0 +1,22 @@
+-- =============================================================================================
+-- 0004_auth_sessions  (M1: magic-link sign-in and sessions)
+--
+-- Generated with
+--   prisma migrate diff --from-migrations prisma/migrations \
+--     --to-schema-datamodel prisma/schema.prisma --shadow-database-url <shadow> --script
+--
+-- Sessions live in Redis (apps/web session.server.ts), not in Postgres, and MagicLinkToken already
+-- exists (0001), so the only schema change M1 needs is an index for the expired-token cleanup
+-- query (packages/db README, "Magic-link cleanup"):
+--   DELETE FROM magic_link_tokens WHERE expires_at < now() - interval '1 day';
+-- magic_link_tokens is a global table (no RLS), so no policy change.
+--
+-- ## Rollback
+-- - Reversible: yes (additive: one index)
+-- - Down steps: re-deploy previous release (old code ignores the index), or
+--   DROP INDEX IF EXISTS "magic_link_tokens_expires_at_idx";
+-- - Data impact: none
+-- =============================================================================================
+
+-- CreateIndex
+CREATE INDEX "magic_link_tokens_expires_at_idx" ON "magic_link_tokens"("expires_at");

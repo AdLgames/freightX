@@ -91,6 +91,17 @@ export default tseslint.config(
       ],
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
+      // React Router loaders/actions throw `redirect()` (a Response) and `data()` to short-circuit;
+      // those two are allowed, every other thrown value must still be an Error.
+      '@typescript-eslint/only-throw-error': [
+        'error',
+        {
+          allow: [
+            { from: 'lib', name: 'Response' },
+            { from: 'package', package: 'react-router', name: 'DataWithResponseInit' },
+          ],
+        },
+      ],
       'no-restricted-syntax': [
         'error',
         {

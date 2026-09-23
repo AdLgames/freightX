@@ -310,5 +310,24 @@ describe.skipIf(!DATABASE_URL)('cross-tenant isolation (database)', () => {
         withOrgTransaction(prisma, orgA, (tx) => tx.auditLog.delete({ where: { id } })),
       ).rejects.toThrow(/append-only|permission denied/);
     });
+
+    it('recordAudit writes a tenant-less row (sign-in) under the app role, which cannot read it back', async () => {
+      const marker = randomUUID();
+      await prisma.$transaction(async (tx) => {
+        if (mustSwitchRole) await tx.$executeRawUnsafe('SET LOCAL ROLE harbour_app');
+        // INSERT ... RETURNING would need SELECT on the new row, which no policy grants for NULL
+        // organisations; recordAudit must therefore not use RETURNING.
+        await recordAudit(tx, {
+          organizationId: null,
+          userId: null,
+          action: 'auth.sign_in',
+          targetType: 'User',
+          targetId: marker,
+        });
+        const visible = await tx.$queryRaw<{ n: bigint }[]>`
+          SELECT count(*) AS n FROM audit_logs WHERE target_id = ${marker}`;
+        expect(Number(visible[0]?.n)).toBe(0);
+      });
+    });
   });
 });

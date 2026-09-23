@@ -9,6 +9,7 @@ import {
   isRouteErrorResponse,
 } from 'react-router';
 import type { Route } from './+types/root';
+import { pageErrorSchema } from './services/page-error';
 import stylesheet from './styles.css?url';
 
 /** §1 non-negotiable: shown on every page and on every quote. */
@@ -45,6 +46,9 @@ export function Layout({ children }: { children: ReactNode }) {
               Harbour
             </Link>
             <Link to="/calculator">Landed-cost calculator</Link>
+            <Link to="/app" className="nav-end">
+              Workspace
+            </Link>
           </nav>
         </header>
         <main id="main" className="container">
@@ -76,8 +80,15 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   let title = 'Something went wrong';
   let detail = 'Please try again in a moment. If it keeps happening, let us know.';
   let stack: string | undefined;
+  let hint: string | null = null;
+  const page = isRouteErrorResponse(error) ? pageErrorSchema.safeParse(error.data) : null;
 
-  if (isRouteErrorResponse(error)) {
+  if (page?.success) {
+    // Auth/workspace guards (services/page-error.ts): their own title and message.
+    title = page.data.title;
+    detail = page.data.message;
+    hint = page.data.hint;
+  } else if (isRouteErrorResponse(error)) {
     title = error.status === 404 ? 'Page not found' : `Error ${error.status}`;
     detail =
       error.status === 404
@@ -92,6 +103,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     <section className="error-page">
       <h1>{title}</h1>
       <p>{detail}</p>
+      {hint ? <p className="hint">{hint}</p> : null}
       {stack ? (
         <pre className="stack">
           <code>{stack}</code>

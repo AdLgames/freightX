@@ -165,6 +165,7 @@ model MagicLinkToken {
   ip        String?
 
   @@index([email, createdAt]) // rate limiting: 5 link requests / hour / email (§7.1)
+  @@index([expiresAt]) // (NEW vs brief, 0004) cleanup of expired tokens (README "Magic-link cleanup")
   @@map("magic_link_tokens")
 }
 

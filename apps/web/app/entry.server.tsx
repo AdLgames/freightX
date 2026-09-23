@@ -103,6 +103,12 @@ export const handleError: HandleErrorFunction = (error, { request }) => {
     });
     return;
   }
+  // React Router's own CSRF layer: a POST whose Origin differs from the request URL gets a 400
+  // before any action runs. Expected hostile/misrouted traffic, not a server fault.
+  if (error instanceof Error && error.message.includes('does not match `origin` header')) {
+    logger.warn('request.cross_origin_rejected', { method: request.method, path: url.pathname });
+    return;
+  }
   logger.error('request.error', {
     requestId: requestIdFor(request),
     method: request.method,

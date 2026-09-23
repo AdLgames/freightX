@@ -21,8 +21,38 @@ const envSchema = z
     TURNSTILE_SECRET_KEY: z.string().max(200).optional(),
     FX_SEED_CSV: z.string().max(1024).optional(),
     RATE_SHEET_PATH: z.string().max(1024).optional(),
-    /** Unused in Phase 0 (no sessions); listed so Phase 1 has a home for it. */
+    /**
+     * Unused: session ids are 32 random bytes stored server-side (hashed), so the cookie needs no
+     * signature. Kept (validated when set) so existing deployments that set it do not break.
+     */
     SESSION_SECRET: z.string().min(32).optional(),
+    /**
+     * Public origin of the app, e.g. `https://app.example.co.uk`. Used for magic links and as the
+     * expected `Origin` of workspace POSTs (CSRF second layer). Required for sign-in in
+     * production; in development/test the request's own origin is used when unset.
+     */
+    APP_URL: z
+      .string()
+      .url()
+      .refine((u) => /^https?:\/\//i.test(u), 'APP_URL must be http(s).')
+      .transform((u) => new URL(u).origin)
+      .optional(),
+    /**
+     * Transactional email (magic links). `console` logs the link (development/test only);
+     * `resend` posts to the Resend API. Unset → console outside production, none in production
+     * (sign-in then fails closed).
+     */
+    EMAIL_TRANSPORT: z.enum(['console', 'resend']).optional(),
+    RESEND_API_KEY: z.string().min(1).max(1024).optional(),
+    /** Sender, e.g. `Harbour <sign-in@example.co.uk>`. */
+    EMAIL_FROM: z
+      .string()
+      .max(320)
+      .regex(
+        /^[^<>@\s]+@[^<>@\s]+$|^[^<>]*<[^<>@\s]+@[^<>@\s]+>$/,
+        'EMAIL_FROM must be an address.',
+      )
+      .optional(),
     /**
      * UK Trade Tariff API key and the header it is sent in. Both or neither. The header name must
      * be confirmed from the Trade Tariff developer portal; it is config, not code. Never logged.
@@ -67,6 +97,10 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     FX_SEED_CSV: blank(source.FX_SEED_CSV),
     RATE_SHEET_PATH: blank(source.RATE_SHEET_PATH),
     SESSION_SECRET: blank(source.SESSION_SECRET),
+    APP_URL: blank(source.APP_URL),
+    EMAIL_TRANSPORT: blank(source.EMAIL_TRANSPORT),
+    RESEND_API_KEY: blank(source.RESEND_API_KEY),
+    EMAIL_FROM: blank(source.EMAIL_FROM),
     TRADE_TARIFF_API_KEY: blank(source.TRADE_TARIFF_API_KEY),
     TRADE_TARIFF_API_KEY_HEADER: blank(source.TRADE_TARIFF_API_KEY_HEADER),
     BROKER_DEFERMENT_FEE_PCT: blank(source.BROKER_DEFERMENT_FEE_PCT),

@@ -1,8 +1,12 @@
 # @harbour/web
 
-Phase 0 of Harbour: the public landed-cost calculator (brief §2, §11 item 5). React Router 7
-framework mode, React 19, Vite 7, zod 4, TypeScript strict. No login, no persistence beyond the
-Phase 0 gate metrics (`calculator.completed`, `signup.completed` log events).
+Harbour's web app. React Router 7 framework mode, React 19, Vite 7, zod 4, TypeScript strict.
+
+- **Phase 0:** the public landed-cost calculator (brief §2, §11 item 5). No login, no persistence
+  beyond the Phase 0 gate metrics (`calculator.completed`, `signup.completed` log events).
+- **Phase 1, M1:** magic-link sign-in, server-side sessions, CSRF, organisations and the
+  workspace shell under `/app` (see "Workspace (M1)" below). The calculator does not depend on
+  any of it and still runs with no `DATABASE_URL` and no `REDIS_URL`.
 
 ```
 app/
@@ -13,6 +17,16 @@ app/
   routes/calculator.tsx       the calculator (loader: lanes/currencies/Turnstile; action: the pipeline)
   routes/signup.tsx           POST-only email signup (zod, honeypot, 5/hour/IP)
   routes/healthz.tsx          GET → { ok, calcVersion, rateSheet, … }
+  routes/login.tsx            M1: sign-in form; POST issues a magic link
+  routes/login_.verify.tsx    M1: magic-link landing (GET renders a button, POST signs in)
+  routes/logout.tsx           M1: POST only, destroys the session
+  routes/onboarding.organization.tsx  M1: first organisation (org + OWNER + customs profile)
+  routes/app.tsx              M1: workspace shell layout for /app/* (nav, org switcher, sign out)
+  routes/app._index.tsx       M1: Home (action-required banner; M4 slots marked)
+  routes/app.switch-org.tsx   M1: POST only, organisation switcher
+  routes/app.{quotes,products,documents,settings}.tsx  placeholders owned by M4, M3, M5, M2/M6
+  components/csrf.tsx         <CsrfProvider>, <CsrfInput/>
+  components/workspace-nav.ts the workspace navigation (one array)
   components/quote-result.tsx result rendering (banner, totals, duty detail, warnings, provenance)
   data/ports.ts, countries.ts UN/LOCODE and ISO country display names
   validators/                 zod schemas: common.ts, calculator.ts, signup.ts (+ tests)
@@ -22,7 +36,16 @@ app/
     rate-limit.server.ts      token bucket: in-memory, or Redis (ioredis + Lua) when REDIS_URL is set
     turnstile.server.ts       Cloudflare Turnstile siteverify (5 s timeout, fail closed)
     logger.server.ts          JSON lines with request id and PII redaction (redact())
-    db.server.ts              THE persistence seam — in-memory stores; Prisma wiring TODO lives here
+    db.server.ts              persistence seam for the calculator's stores (Prisma when DATABASE_URL)
+    auth.server.ts            M1: requireUser, requireOrgContext, withOrg, withUser, sessions
+    csrf.server.ts            M1: requireCsrf (token + Origin/Sec-Fetch-Site)
+    session.server.ts         M1: SessionManager, Redis / in-memory stores, cookie
+    magic-link.server.ts      M1: token issue/consume (sha256 in DB, single use)
+    email.server.ts           M1: EmailTransport (console for dev, Resend)
+    organizations.server.ts   M1: memberships, createOrganization, org-switch audit
+    workspace.server.ts       M1: what the workspace needs at startup (fail closed)
+    redis.server.ts           one Redis connection for rate limits and sessions
+    page-error.ts             pageError(): 403/503 pages rendered by root's ErrorBoundary
     fx.server.ts, freight.server.ts, tariff.server.ts, env.server.ts, paths.server.ts,
     request.server.ts, security-headers.server.ts, signup-repository.server.ts
   styles.css                  one plain stylesheet, no framework, no external assets
@@ -59,18 +82,21 @@ curl -s -X POST localhost:3123/calculator \
 
 All optional (see the root `.env.example`):
 
-| Variable                                      | Effect when set                                                | When unset                                                            |
-| --------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `DATABASE_URL`                                | reserved for the Prisma stores (`db.server.ts`)                | in-memory tariff cache, FX store, signup list                         |
-| `REDIS_URL`                                   | shared token-bucket rate limiter (fails open if Redis is down) | per-process in-memory limiter                                         |
-| `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | Turnstile widget + server-side verification (fail closed)      | bot check off, one warning at startup                                 |
-| `FX_SEED_CSV`                                 | HMRC monthly CSV loaded into the FX store at startup           | adapters **sample** CSV, loud `fx.sample_rates` warning               |
-| `RATE_SHEET_PATH`                             | freight rate sheet JSON                                        | `packages/adapters/rate-sheets/v1.json`, resolved through the package |
-| `SESSION_SECRET`                              | unused in Phase 0                                              | —                                                                     |
-| `TRADE_TARIFF_API_KEY` / `…_HEADER`           | key sent in that header on every tariff call (both or neither) | anonymous calls; only one of the two set → startup fails              |
-| `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form   | no default fee; the form says fee terms depend on the forwarder       |
-| `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown     | no adjustment                                                         |
-| `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                     | development / debug                                                   |
+| Variable                                      | Effect when set                                                   | When unset                                                            |
+| --------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `DATABASE_URL`                                | Prisma stores (`db.server.ts`) and the workspace                  | in-memory calculator stores; workspace says "needs a database"        |
+| `REDIS_URL`                                   | shared rate limiter (fails open) and session store (fails closed) | in-memory limiter and sessions; **production: workspace 503**         |
+| `APP_URL`                                     | origin for magic links and the CSRF Origin check                  | request origin (dev/test); **production: sign-in not available**      |
+| `EMAIL_TRANSPORT`                             | `console` (dev/test only) or `resend`                             | console outside production; **production: sign-in not available**     |
+| `RESEND_API_KEY` / `EMAIL_FROM`               | Resend API key and sender, required by `EMAIL_TRANSPORT=resend`   | —                                                                     |
+| `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | Turnstile widget + server-side verification (fail closed)         | bot check off, one warning at startup                                 |
+| `FX_SEED_CSV`                                 | HMRC monthly CSV loaded into the FX store at startup              | adapters **sample** CSV, loud `fx.sample_rates` warning               |
+| `RATE_SHEET_PATH`                             | freight rate sheet JSON                                           | `packages/adapters/rate-sheets/v1.json`, resolved through the package |
+| `SESSION_SECRET`                              | unused (session ids are random and server-side; nothing signed)   | —                                                                     |
+| `TRADE_TARIFF_API_KEY` / `…_HEADER`           | key sent in that header on every tariff call (both or neither)    | anonymous calls; only one of the two set → startup fails              |
+| `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form      | no default fee; the form says fee terms depend on the forwarder       |
+| `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown        | no adjustment                                                         |
+| `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                        | development / debug                                                   |
 
 `TRADE_TARIFF_API_KEY_HEADER` must be confirmed from the Trade Tariff developer portal before
 use; the key is never logged (only its presence, in `app.started`). The fee and inland-adjustment
@@ -130,10 +156,84 @@ signup list (see `db.server.ts`).
 - Structured logs never contain IPs, emails, EORI or VAT numbers (`redact()` is tested).
 - Every pipeline failure degrades to an `INDICATIVE` quote or a form message; nothing 500s to the user.
 
+## Workspace (M1)
+
+### Sign-in (§7.1)
+
+1. `/login` POST: zod email → Turnstile (when configured) → rate limits (20/hour per IP, 5/hour
+   per address; buckets keyed by sha256 of the lower-cased address / the IP, then hashed again) →
+   a 32-byte token whose sha256 is stored in `MagicLinkToken` for 15 minutes → email with
+   `${APP_URL}/login/verify?token=…`. Every valid address gets the same answer ("If that address
+   can sign in, we've sent a link"); no `User` is created until a link is confirmed.
+2. `/login/verify` GET renders a "Sign in" button and does not touch the token (mail scanners
+   prefetch links). The POST marks the token used with one conditional `UPDATE … WHERE usedAt IS
+NULL AND expiresAt > now` (count must be 1), creates the user on first sign-in, writes a
+   tenant-less `auth.sign_in` audit row and starts a new session.
+3. No memberships → `/onboarding/organization` (organisation name only; the EORI/VAT/customs
+   wizard is M2).
+
+### Sessions
+
+`session.server.ts`. Id = 32 random bytes in cookie `__Host-harbour_sid` (`HttpOnly; Secure;
+SameSite=Lax; Path=/`, 30-day `Max-Age`); `NODE_ENV=development` over plain http uses
+`harbour_sid` without `Secure`, because browsers reject `__Host-` cookies that are not Secure.
+The store key is sha256(id); the value is `{ userId, currentOrgId, role, csrfToken, createdAt,
+lastSeenAt, rotatedAt }` (`role` is the role last seen for `currentOrgId`, so a role change made by
+someone else rotates the session on the next request). 30-day sliding expiry, refreshed at most
+once an hour (the /app layout re-issues the cookie then). The id rotates on sign-in, organisation
+switch, onboarding and role change. `POST /logout` destroys it.
+
+- `REDIS_URL` set → `RedisSessionStore` on the same connection as the rate limiter.
+- Unset in development/test → `InMemorySessionStore` (single process; lost on restart).
+- Unset in **production** → every workspace route returns 503 "Workspace temporarily unavailable"
+  and one error is logged at startup. There is deliberately no in-memory fallback: on Vercel each
+  serverless instance would have its own sessions, so users would be signed out at random. The
+  calculator is unaffected.
+- A Redis error while reading or writing a session is a 503, never "signed out".
+
+### Tenancy (§7.2, ADR-0009)
+
+`requireOrgContext` takes the organisation from the session and re-reads the membership on every
+request inside `withOrgTransaction`. A missing membership (removed, organisation deleted, or a
+tampered session) rotates the session onto another membership or to onboarding. URL params and
+form fields never choose the organisation; the org switcher's field is only a request, checked
+against memberships before the session changes.
+
+### Extension points for later milestones
+
+- **Add a nav item:** one entry in `app/components/workspace-nav.ts` (`{ to, label,
+permission? }`), plus your own route file `app/routes/app.<name>.tsx` (it renders inside the
+  shell). Replace the placeholder file your milestone owns rather than editing someone else's.
+- **Declare a route's permission:** every loader and action starts with
+  `const ctx = await requireOrgContext(request, { permission: 'quote.edit' })` (actions from the
+  RBAC matrix in `@harbour/db` `rbac.ts`). Missing permission → 403 page. Hiding a nav item is
+  not a check; the route must call this itself. `assertPermission(ctx, action)` checks a second
+  action later in the same handler.
+- **Database access:** `await withOrg(ctx, (tx) => tx.product.findMany())`. Everything that touches
+  a tenant table goes through `withOrg` (Prisma tenant scope + `app.current_org` for RLS). With
+  FORCE RLS, a query outside it sees no rows. `withUser(ctx, fn)` is only for the user's own
+  memberships/organisations.
+- **Mutating forms:** render `<CsrfInput />` inside every `<Form method="post">` under `/app` (the
+  shell provides the token); in the action, `const form = await readForm(request); await
+requireCsrf(request, form, ctx.session);` before anything else. Forms outside `/app` wrap
+  themselves in `<CsrfProvider token={…}>` (see onboarding).
+- **Audit:** state changes call `recordAudit(tx, { organizationId: ctx.org.id, userId:
+ctx.user.id, action: 'product.create', targetType: 'Product', targetId })` with the `tx` from
+  `withOrg`, so the audit row commits with the change. IDs and enum values only in `metadata`.
+- **Privilege changes** (e.g. M2 changing a member's role): the affected user's session rotates on
+  their next request automatically; an action that changes the current user's own org or role
+  calls `rotateSession(ctx, request, patch)` and returns its `Set-Cookie`.
+- **Error pages:** `throw pageError(status, title, message)` from `services/page-error.ts`.
+
+### Not in M1
+
+Passkeys and TOTP (§7.1), invalidating sessions on email change (no email change yet), the
+settings wizard (M2), recent drafts / quick duty check on Home (M4). Magic-link rows are not yet
+cleaned up (TODO for the worker, see packages/db README).
+
 ## Phase 1 TODO (not built — brief §2, §7)
 
-- Auth: magic link + passkeys, Redis session store, CSRF tokens on mutating forms.
-- Organisations, memberships, RBAC (`can()`), tenant-scoped Prisma client + RLS (`@harbour/db`).
+- Auth: passkeys (WebAuthn), optional TOTP.
 - Products, suppliers, HS code verification stored as `hsCodeVerifiedAt`.
 - Saved quotes: persist `QuoteResult` snapshots, `ACCEPTED` immutability, hourly expiry job.
 - Document vault: presigned uploads, AV scan, magic-byte checks.
@@ -159,4 +259,7 @@ CSV are bundled into the server build, so no runtime file paths are needed. `RAT
 
 Serverless caveat: the in-memory rate limiter and stores are per function instance. Set
 `REDIS_URL` so the 20-calculations-per-hour limit holds across instances, and set the Turnstile
-keys before any public traffic.
+keys before any public traffic. The workspace goes further: in production it refuses to start
+sessions without `REDIS_URL` (503), because per-instance sessions would sign users out at random.
+It also needs `DATABASE_URL`, `APP_URL` and `EMAIL_TRANSPORT=resend` with `RESEND_API_KEY` and
+`EMAIL_FROM`.

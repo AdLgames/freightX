@@ -10,6 +10,7 @@ prisma/migrations/0001_init                  generated from the schema (prisma m
 prisma/migrations/0002_rls_and_guards        hand-written: role, RLS policies, triggers
 prisma/migrations/0003_customs_profile_and_quote_1_1
                                              generated DDL + hand-written CHECKs/trigger/RLS
+prisma/migrations/0004_auth_sessions         generated: index on magic_link_tokens(expires_at)
 src/client.ts     createPrismaClient()       one pool per process
 src/tenancy.ts    forOrganization(), withOrgTransaction(), scopeArgs()
 src/rbac.ts       can(role, action), assertCan()
@@ -49,6 +50,10 @@ Copy `.env.example` to `.env` for local work. Prisma reads `DATABASE_URL` from i
 - `0003_customs_profile_and_quote_1_1` = generated DDL (part 1) + hand-written, idempotent rules
   (part 2). Part 1 came from `prisma migrate diff --from-schema-datamodel <schema.prisma as of 0002>
 --to-schema-datamodel prisma/schema.prisma --script`.
+- `0004_auth_sessions` (M1) was produced with `prisma migrate diff --from-migrations
+prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <shadow>
+--script`. Sessions live in Redis, so the only change is an index for the magic-link cleanup
+  below.
 - **Shadow database (fixed).** 0002's `REVOKE ... "_prisma_migrations"` is guarded with
   `to_regclass`, so `migrate dev` and `migrate diff --from-migrations` can replay all migrations
   into a shadow database. The guard was added before any non-throwaway database applied 0002.
@@ -136,7 +141,9 @@ Extras:
 - `audit_logs` / `outbox_events` rows with a `NULL` organisation may only be inserted when no
   tenant context is set and are never readable through the app role (support tooling reads them
   with its own role and audit trail). The Phase 2 outbox worker will need its own role/policy —
-  decide that when Phase 2 is built.
+  decide that when Phase 2 is built. Because Postgres applies the SELECT policy to `RETURNING`,
+  `recordAudit` inserts with `createMany` (no `RETURNING`); a `create` of a tenant-less audit row
+  fails under the app role with "new row violates row-level security policy".
 
 ## Database roles
 
@@ -201,6 +208,20 @@ To be enforced server-side in the booking transaction alongside §6.1 items 1–
 10. The quote's snapshotted `paymentMethod` must equal the profile's current one; otherwise
     recompute the quote (the financing fee / border outlay depend on it).
 
+## Magic-link cleanup (TODO for the worker)
+
+`magic_link_tokens` rows (M1 sign-in, apps/web `magic-link.server.ts`) are single-use and expire
+after 15 minutes, but nothing deletes them yet. When `apps/worker` exists, add a daily job (as the
+owner/maintenance role; the table has no RLS) running:
+
+```sql
+DELETE FROM magic_link_tokens WHERE expires_at < now() - interval '1 day';
+```
+
+`magic_link_tokens_expires_at_idx` (migration 0004) keeps it an index range scan. Keeping a day of
+expired rows leaves a short window for abuse investigation; the rows hold the email address, the
+token hash and a hash of the requesting IP, never the token itself.
+
 ## Prisma stores (src/stores.ts)
 
 Implementations of the persistence seams used by `apps/web` (`app/services/db.server.ts`). The
@@ -260,7 +281,7 @@ or `/append-only|permission denied/`.
   scoped client cannot see/update/delete/redirect to another org, raw `SELECT` under
   `withOrgTransaction` returns only that org's rows, no context → no rows, raw cross-tenant
   `INSERT` rejected by `WITH CHECK`, accepted quote update/delete/line insert rejected, audit rows
-  append-only. When the connection is a superuser (typical local Docker), the raw checks
+  append-only, a tenant-less audit row (sign-in) insertable but not readable by the app role. When the connection is a superuser (typical local Docker), the raw checks
   `SET LOCAL ROLE harbour_app` so RLS is actually exercised.
 
 ```sh

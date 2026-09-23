@@ -43,7 +43,7 @@ export interface Stores {
  * a warm serverless instance (Vercel) re-runs route code but keeps module state.
  */
 let prismaSingleton: PrismaClient | undefined;
-const getPrisma = (databaseUrl: string): PrismaClient => {
+export const getPrisma = (databaseUrl: string): PrismaClient => {
   prismaSingleton ??= createPrismaClient({ databaseUrl });
   return prismaSingleton;
 };
