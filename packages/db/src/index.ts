@@ -71,6 +71,11 @@ export {
   DocumentStatus,
   PaymentMethod,
   Role as PrismaRole,
+  // M3 (ADR-0012)
+  PaymentTermType,
+  BalanceTrigger,
+  PayoutPartner,
+  PayoutMethodType,
 } from '../generated/client/index.js';
 export type {
   PrismaClient,
@@ -92,4 +97,8 @@ export type {
   OutboxEvent,
   TariffCache,
   FxRate,
+  // M3 (ADR-0012)
+  PickupLocation,
+  PaymentTerms,
+  PayoutMethod,
 } from '../generated/client/index.js';

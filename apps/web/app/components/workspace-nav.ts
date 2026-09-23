@@ -18,6 +18,7 @@ export const WORKSPACE_NAV: readonly WorkspaceNavItem[] = [
   { to: '/app', label: 'Home', end: true },
   { to: '/app/quotes', label: 'Quotes', permission: 'quote.view' },
   { to: '/app/products', label: 'Products' },
+  { to: '/app/suppliers', label: 'Suppliers' }, // M3
   { to: '/app/documents', label: 'Documents', permission: 'doc.download' },
   { to: '/app/settings', label: 'Settings & billing' },
 ];

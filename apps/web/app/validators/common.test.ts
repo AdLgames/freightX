@@ -82,7 +82,8 @@ describe('hsCode', () => {
 describe('currency and quantity', () => {
   it('allow-lists currencies', () => {
     expect(currency.parse('GBP')).toBe('GBP');
-    expect(currency.safeParse('JPY').success).toBe(false);
+    expect(currency.parse('JPY')).toBe('JPY'); // M3: added for Japanese suppliers (UX spec "Data notes")
+    expect(currency.safeParse('KRW').success).toBe(false);
     expect(currency.safeParse('usd').success).toBe(false);
   });
   it('quantity is a positive integer up to 1,000,000', () => {

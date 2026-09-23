@@ -304,3 +304,40 @@ internal ids (TEXT cannot be compared with `::uuid` in policies); snake_case `@@
 composite foreign keys `(child_fk, organization_id) → parent(id, organization_id)` so a
 denormalised `organization_id` can never disagree with its parent — the trigger on `quote_lines`
 relies on that.
+
+## Supplier entities (migration 0007, M3, ADR-0012)
+
+`0007_supplier_entities` = generated DDL (part 1, `prisma migrate diff --from-migrations … --shadow-database-url`)
+
+- hand-written, idempotent rules (part 2). Two hand adjustments in part 1: `suppliers.legal_name` and
+  `suppliers.country_of_incorporation` are added nullable, **backfilled** from `name` / `country_code`,
+  then set `NOT NULL`, so the migration applies to a table with rows. Additive otherwise; rollback note
+  in the file.
+
+* `suppliers`: legal entity columns (`legal_name`, `trading_name`, `registration_number`,
+  `country_of_incorporation` with an ISO alpha-2 CHECK, `default_currency`) and `archived_at`.
+  `country_code` is **kept as a deprecated alias** that the app writes in step with
+  `country_of_incorporation`; it is removed after M4 (decisions-needed (w)). `name` is the display
+  name (trading name, else legal name), maintained by the app.
+* `products`: `carton_length_cm/width_cm/height_cm Decimal(8,2)`, `hs_description`,
+  `preference_eligible` (default false), `archived_at`.
+* New tenant tables, each with a denormalised `organization_id`, a composite FK
+  `(supplier_id, organization_id) → suppliers(id, organization_id)` (`ON DELETE CASCADE`), RLS
+  (`ENABLE` + `FORCE`, `<table>_tenant` policy) and grants to `harbour_app`; all three are in
+  `TENANT_MODELS`/`TENANT_TABLES`:
+  - `pickup_locations` — `closest_port_code` CHECK `^[A-Z]{2}[A-Z0-9]{3}$`, `country` CHECK alpha-2,
+    and the partial unique index `pickup_locations_one_default_per_supplier` (`supplier_id`
+    `WHERE is_default`): at most one default per supplier, whatever the app does.
+  - `payment_terms` — one row per supplier (`supplier_id` unique); enums `payment_term_type`
+    (`PREPAID`, `NET`, `DEPOSIT_BALANCE`) and `balance_trigger` (`ON_SHIPMENT`,
+    `AGAINST_BILL_OF_LADING`, `ON_ARRIVAL`); CHECKs: `deposit_pct` in [0, 100] (percent
+    convention, "30.00" = 30%), `net_days >= 0`, `DEPOSIT_BALANCE` needs `deposit_pct` +
+    `balance_trigger`, `NET` needs `net_days`.
+  - `payout_methods` — partner references only (§7.3): enums `payout_partner` (`AIRWALLEX`) and
+    `payout_method_type` (`LOCAL`, `SWIFT`), `partner_beneficiary_id` (unique per partner),
+    `currency`/`bank_country` format CHECKs and `account_last4` limited to four characters by CHECK.
+    No account number, routing code or account name can be stored. **No code writes this table in
+    M3.**
+* Enums are additive only, as everywhere. `test/migrations.test.ts` checks the DDL shape, the
+  backfill, the CHECKs, the partial index, the policies, the grants and idempotency;
+  `apps/web/app/routes/catalogue.db.test.ts` exercises the constraints and RLS against a database.
