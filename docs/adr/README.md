@@ -5,19 +5,20 @@ accepted; a change of mind gets a new ADR that supersedes the old one.
 
 ## Index
 
-| ID                                                           | Title                                                          | Status   | Date       |
-| ------------------------------------------------------------ | -------------------------------------------------------------- | -------- | ---------- |
-| [0001](0001-prisma-6-over-7.md)                              | Prisma 6.19.x rather than 7/8                                  | Accepted | 2026-09-23 |
-| [0002](0002-react-router-7-framework-mode.md)                | React Router 7 framework mode for "Remix"                      | Accepted | 2026-09-23 |
-| [0003](0003-money-as-decimal-strings-at-boundaries.md)       | Money as `Decimal`, decimal strings at boundaries              | Accepted | 2026-09-23 |
-| [0004](0004-apportionment-largest-remainder.md)              | Apportionment by chargeable weight, largest-remainder rounding | Accepted | 2026-09-23 |
-| [0005](0005-door-incoterms-customs-value.md)                 | Customs value under DAP/DPU/DDP                                | Proposed | 2026-09-23 |
-| [0006](0006-fail-closed-tariff-rules.md)                     | Fail-closed tariff resolution rules                            | Accepted | 2026-09-23 |
-| [0007](0007-blocking-warning-set.md)                         | The blocking warning set                                       | Proposed | 2026-09-23 |
-| [0008](0008-phase-0-fx-and-tariff-sources.md)                | Phase 0 FX and tariff sources                                  | Accepted | 2026-09-23 |
-| [0009](0009-tenancy-defence-in-depth.md)                     | Tenancy defence in depth                                       | Accepted | 2026-09-23 |
-| [0010](0010-sailing-schedules-read-only.md)                  | Sailing schedules: read-only visibility before booking         | Proposed | 2026-09-23 |
-| [0011](0011-valuation-additions-and-duty-payment-routing.md) | Valuation additions and duty payment routing                   | Proposed | 2026-09-23 |
+| ID                                                                | Title                                                          | Status   | Date       |
+| ----------------------------------------------------------------- | -------------------------------------------------------------- | -------- | ---------- |
+| [0001](0001-prisma-6-over-7.md)                                   | Prisma 6.19.x rather than 7/8                                  | Accepted | 2026-09-23 |
+| [0002](0002-react-router-7-framework-mode.md)                     | React Router 7 framework mode for "Remix"                      | Accepted | 2026-09-23 |
+| [0003](0003-money-as-decimal-strings-at-boundaries.md)            | Money as `Decimal`, decimal strings at boundaries              | Accepted | 2026-09-23 |
+| [0004](0004-apportionment-largest-remainder.md)                   | Apportionment by chargeable weight, largest-remainder rounding | Accepted | 2026-09-23 |
+| [0005](0005-door-incoterms-customs-value.md)                      | Customs value under DAP/DPU/DDP                                | Proposed | 2026-09-23 |
+| [0006](0006-fail-closed-tariff-rules.md)                          | Fail-closed tariff resolution rules                            | Accepted | 2026-09-23 |
+| [0007](0007-blocking-warning-set.md)                              | The blocking warning set                                       | Proposed | 2026-09-23 |
+| [0008](0008-phase-0-fx-and-tariff-sources.md)                     | Phase 0 FX and tariff sources                                  | Accepted | 2026-09-23 |
+| [0009](0009-tenancy-defence-in-depth.md)                          | Tenancy defence in depth                                       | Accepted | 2026-09-23 |
+| [0010](0010-sailing-schedules-read-only.md)                       | Sailing schedules: read-only visibility before booking         | Proposed | 2026-09-23 |
+| [0011](0011-valuation-additions-and-duty-payment-routing.md)      | Valuation additions and duty payment routing                   | Proposed | 2026-09-23 |
+| [0012](0012-supplier-legal-vs-physical-and-payments-readiness.md) | Supplier legal vs physical entity; payments readiness          | Proposed | 2026-09-23 |
 
 "Proposed" ADRs record what the code does today but await confirmation from the founder or the
 customs practitioner (see `docs/decisions-needed.md`).
