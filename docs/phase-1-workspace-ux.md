@@ -81,6 +81,62 @@ entries" jargon.
 - **Quick duty check.** HS code plus invoice value gives duty and VAT rates without saving a
   quote. It reuses the tariff client, the 24-hour cache and the tariff rate limit (10/min).
 
+## Products (catalogue)
+
+Every saved product pre-fills the customs and freight inputs of future quotes. It looks like an
+inventory list; it is really the reusable compliance data behind every quote.
+
+### List
+
+A dense table: SKU, product name, supplier, origin, HS code, unit value and currency, CBM and
+weight per unit, and a verified mark when `hsCodeVerifiedAt` is set. Unverified codes show an
+amber mark, because they make every quote using them `INDICATIVE` (§5.2).
+
+### Add or edit product
+
+A right-hand drawer, not a wizard, in three sections mapped to the Prisma `Product` model:
+
+- **Identity:** SKU (unique per organisation), name, supplier (picked from `Supplier`, or created
+  inline with name and country).
+- **Sourcing:** origin country (searchable ISO list; stored on the product because it can differ
+  from the supplier's country and it drives preferential rates), unit value and currency.
+- **Logistics and compliance:** unit weight (kg), unit volume (CBM) or carton dimensions plus
+  units per carton (volume computed with Decimal), and the HS code.
+
+### HS code field
+
+- Strip spaces and dots as the user types.
+- **Corrected:** accept 6, 8 or 10 digits, not only 10. A 10-digit code is looked up directly.
+  A 6- or 8-digit code lists its 10-digit children with their official descriptions and duty
+  rates, and the user picks one; the system never guesses (§5.2, ADR-0006). Anything else (for
+  example 9 or 11 digits) is rejected with a clear message.
+- On a complete code, a debounced server call shows the official description below the field,
+  such as "Tableware and kitchenware, of plastics". It uses the existing tariff client with its
+  24-hour cache and the tariff rate limit (10 lookups per minute per user, §7.5).
+- `hsCodeVerifiedAt` is set only when the lookup succeeds. If the tariff service is down the
+  product can still be saved, unverified, with a message saying so.
+- **Corrected:** the API is the UK Trade Tariff service at
+  `https://www.trade-tariff.service.gov.uk/api/v2`, which the adapters already use, not
+  `api.trade.gov.uk`.
+
+### Adding catalogue products to a quote
+
+"Add from catalogue", pick a product, type a quantity. The engine multiplies weight and volume,
+converts the value at the HMRC monthly rate, and applies the product's tariff. On save, each
+line **copies** the product's HS code, origin, value, currency, weight and volume into
+`QuoteLine` (quotes are snapshots, §1): editing the product later never changes an existing
+quote. The builder offers "update to current catalogue values" on draft quotes only.
+
+### Data notes
+
+- **Corrected:** the example "Kyoto Ceramics, JP, ¥1200" needs JPY, which is not in the
+  current currency allow-list (GBP, USD, EUR, CNY, INR, TRY, VND, BDT, PKR, §5.6). HMRC publishes
+  a monthly JPY rate, so adding it is a one-line change plus a test. Japanese origin can also
+  qualify for the UK–Japan agreement preference, which the engine handles when the user claims
+  it.
+- The sample HS codes in the draft have not been checked against the tariff. Verify them with
+  the lookup before using them in demos or fixtures.
+
 ## Quote builder
 
 - Split screen: inputs left, a sticky breakdown right that recalculates as the user types
