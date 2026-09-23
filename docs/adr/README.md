@@ -23,6 +23,7 @@ accepted; a change of mind gets a new ADR that supersedes the old one.
 | [0014](0014-actual-costs-as-ap-subledger.md)                      | Actual costs as an accounts payable sub-ledger                  | Proposed                       | 2026-09-23 |
 | [0015](0015-payments-partner-and-trade-finance-route.md)          | Payments partner, flow of funds, trade finance route            | Decided, pending confirmations | 2026-09-23 |
 | [0016](0016-supplier-payments-design.md)                          | Supplier payments: connected accounts, payouts, FX margin audit | Proposed                       | 2026-09-23 |
+| [0017](0017-shipment-tracking-design.md)                          | Shipment tracking: milestones, vessel positions, map            | Proposed                       | 2026-09-23 |
 
 "Proposed" ADRs record what the code does today but await confirmation from the founder or the
 customs practitioner (see `docs/decisions-needed.md`).
