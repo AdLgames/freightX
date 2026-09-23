@@ -1,0 +1,23 @@
+{
+  "_comment": "HAND-AUTHORED SAMPLE in the documented Companies House company profile shape (GET /company/12345678). Not a live recording. Only company_name, company_number, company_status and type are read.",
+  "accounts": { "next_due": "2026-12-31", "overdue": false },
+  "can_file": true,
+  "company_name": "HYDRO IMPORTS LTD",
+  "company_number": "12345678",
+  "company_status": "active",
+  "date_of_creation": "2019-03-01",
+  "etag": "0f343b0931126a20f133d67c2b018a3b",
+  "has_been_liquidated": false,
+  "has_charges": false,
+  "has_insolvency_history": false,
+  "jurisdiction": "england-wales",
+  "links": { "self": "/company/12345678", "filing_history": "/company/12345678/filing-history" },
+  "registered_office_address": {
+    "address_line_1": "1 Example Street",
+    "locality": "London",
+    "postal_code": "EC1A 1AA",
+    "country": "England"
+  },
+  "sic_codes": ["46900"],
+  "type": "ltd"
+}

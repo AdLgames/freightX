@@ -16,6 +16,10 @@ export const ACTIONS = [
   'shipment.book',
   'billing.manage',
   'member.manage',
+  // M2 — settings additions (not in the brief's table): Companies House confirmation (ADR-0015)
+  // and the audit-log view are OWNER/ADMIN, like the other organisation settings.
+  'org.company.confirm',
+  'audit.view',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -33,6 +37,9 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   'shipment.book': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'billing.manage': { OWNER: true, ADMIN: false, MEMBER: false, VIEWER: false },
   'member.manage': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  // M2
+  'org.company.confirm': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  'audit.view': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
 };
 
 export class ForbiddenError extends Error {

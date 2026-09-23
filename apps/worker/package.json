@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@harbour/adapters": "workspace:*",
+    "@harbour/db": "workspace:*",
     "@harbour/engine": "workspace:*",
     "bullmq": "^5.81.0",
     "ioredis": "^5.9.0",

@@ -94,3 +94,23 @@ Alerts from this worker are handled by
 The runbook refers to the jobs as `fx.hmrc-monthly`, `fx.ecb-daily` and `tariff.refresh`; they
 map to the `fx-refresh` (both FX sources, one run) and `tariff-refresh` queues here. Circuit
 breaker incidents: [`docs/runbooks/circuit-breaker-open.md`](../../docs/runbooks/circuit-breaker-open.md).
+
+## Identity verification jobs (M2)
+
+`eori-verify` and `vat-verify` are **on-demand** queues (no cron): apps/web adds a job
+`{ organizationId }` when an EORI or VAT number is saved in Settings. The job reads the
+**encrypted** number and the organisation's wrapped data key, decrypts in memory, calls the HMRC
+checker (`HmrcEoriChecker` / `HmrcVatChecker` in `@harbour/adapters`) and writes
+`eori_/vat_verification_status` (`VALID` / `INVALID` / `ERROR`) plus `_verified_at`, only if the
+stored ciphertext is unchanged since the job was queued. A definite HMRC answer completes the
+job; `UNAVAILABLE` / `MALFORMED` / `BAD_REQUEST` records `ERROR` and throws so BullMQ retries;
+three consecutive errors for one organisation raise **warning `IDENTITY_VERIFY_REPEATED_ERROR`**.
+The number never appears in a log, summary or alert.
+
+| Variable               | Meaning                                                                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`         | Same database as apps/web. The store (`identity-store.server.ts`) runs every statement inside `withOrgTransaction(organizationId)`, so the login role must be a non-superuser member of `harbour_app` (RLS). |
+| `FIELD_ENCRYPTION_KEY` | The **same** master key as apps/web. Unset → the identity jobs fail with a clear error; the FX/tariff/expiry jobs are unaffected.                                                                            |
+| `HMRC_API_BASE_URL`    | Optional override of `https://api.service.hmrc.gov.uk` (tests, sandbox).                                                                                                                                     |
+
+Run one inline: `node dist/main.js --once eori-verify --data '{"organizationId":"<uuid>"}'`.

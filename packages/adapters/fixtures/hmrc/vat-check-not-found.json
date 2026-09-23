@@ -1,0 +1,5 @@
+{
+  "_comment": "HAND-AUTHORED SAMPLE of the documented 404 body from the HMRC VAT checker for an unknown VRN. Not a live recording.",
+  "code": "NOT_FOUND",
+  "message": "targetVrn does not match a registered company"
+}

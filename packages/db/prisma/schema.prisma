@@ -41,7 +41,28 @@ model Organization {
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at") // soft delete
 
+  // M2 (NEW vs brief, migration 0008) — field encryption (§7.3, src/crypto.ts) and identity checks.
+  // `eoriNumber` / `vatNumber` above hold ciphertext (`v1:<iv>:<tag>:<data>`, AAD = org id + field
+  // name) under a per-organisation data key, itself stored wrapped by the master key here. The
+  // last four characters are kept in clear for display only; never log either field.
+  dataKeyCiphertext      String?            @map("data_key_ciphertext")
+  eoriLast4              String?            @map("eori_last4")
+  vatLast4               String?            @map("vat_last4")
+  eoriVerificationStatus VerificationStatus @default(UNVERIFIED) @map("eori_verification_status") // HMRC EORI checker (§5.6), set by the worker's eori-verify job
+  eoriVerifiedAt         DateTime?          @map("eori_verified_at")
+  vatVerificationStatus  VerificationStatus @default(UNVERIFIED) @map("vat_verification_status") // HMRC VAT checker (§5.6), set by the worker's vat-verify job
+  vatVerifiedAt          DateTime?          @map("vat_verified_at")
+  // M2 — Companies House gate (ADR-0015): stored for audit, only active ltd/plc/LLP will later see
+  // trade finance. `companiesHouseNumber` null + `companiesHouseCheckedAt` set = "sole trader or
+  // partnership" was chosen. Values are copied from the API response, never from the form.
+  companiesHouseNumber    String?   @map("companies_house_number")
+  companiesHouseStatus    String?   @map("companies_house_status")
+  companyType             String?   @map("company_type")
+  companiesHouseCheckedAt DateTime? @map("companies_house_checked_at")
+  companiesHouseName      String?   @map("companies_house_name")
+
   members        Membership[]
+  invitations    Invitation[] // M2 (NEW vs brief) pending and historical invitations
   products       Product[]
   suppliers      Supplier[]
   quotes         Quote[]
@@ -61,8 +82,13 @@ model User {
   name       String?
   mfaEnabled Boolean  @default(false) @map("mfa_enabled")
   createdAt  DateTime @default(now()) @map("created_at")
+  // M2 (NEW vs brief, migration 0008) — every session records the epoch it was created under;
+  // bumping it (member removed, later: email change) invalidates all of the user's sessions on
+  // their next request (§7.1 "rotated on privilege change").
+  sessionEpoch Int @default(0) @map("session_epoch")
 
   memberships       Membership[]
+  invitationsSent   Invitation[] @relation("invitationsSent") // M2 (NEW vs brief) inverse of Invitation.invitedBy
   uploadedDocuments Document[]   @relation("uploadedDocuments") // (NEW vs brief) inverse of Document.uploadedBy
   verifiedDocuments Document[]   @relation("verifiedDocuments") // (NEW vs brief) inverse of Document.verifiedBy
 
@@ -101,6 +127,44 @@ enum Plan {
   PRO
 
   @@map("plan")
+}
+
+// M2 (NEW vs brief, migration 0008) — result of the asynchronous HMRC EORI / VAT checks (§5.6).
+// Additive only. PENDING = saved, job queued; ERROR = the checker could not be reached (retried).
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VALID
+  INVALID
+  ERROR
+
+  @@map("verification_status")
+}
+
+// M2 (NEW vs brief, migration 0008) — invitation to join an organisation (§7.2 "manage members").
+// Tenant table with RLS. The raw token exists only in the email link (`/invite/accept?token=`);
+// `tokenHash` = sha256(secret). `email` is stored lower-cased for the accept-time comparison and
+// `emailHash` = sha256(email) so "is this address already invited?" never needs the address in a
+// query plan or log. Expires 7 days after creation; `acceptedAt` / `revokedAt` close it.
+model Invitation {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  email          String
+  emailHash      String    @map("email_hash")
+  role           Role      @default(MEMBER)
+  invitedById    String    @map("invited_by_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  expiresAt      DateTime  @map("expires_at")
+  acceptedAt     DateTime? @map("accepted_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  invitedBy    User         @relation("invitationsSent", fields: [invitedById], references: [id])
+
+  @@index([organizationId, emailHash])
+  @@index([organizationId, createdAt])
+  @@map("invitations")
 }
 
 // (NEW vs brief) How import duty/VAT is paid at the border. Additive only (§4 migration rules):

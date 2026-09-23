@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { decimalString } from '../validators/common';
+import { decimalString, eori, safeString } from '../validators/common'; // M2: eori, safeString
 import type { CalculatorMode } from '../validators/calculator';
 import { parseLogLevel } from './logger.server';
 
@@ -72,6 +72,15 @@ const envSchema = z
     INLAND_VAT_ADJUSTMENT_LCL_GBP: gbpEnv.optional(),
     INLAND_VAT_ADJUSTMENT_FCL_GBP: gbpEnv.optional(),
     INLAND_VAT_ADJUSTMENT_AIR_GBP: gbpEnv.optional(),
+    // M2 — settings (apps/web/README.md "Settings (M2)"). All optional; production without
+    // FIELD_ENCRYPTION_KEY closes the workspace (§7.3), never the calculator.
+    /** 32 random bytes, base64 — the field-encryption master key (packages/db crypto.ts). Never logged. */
+    FIELD_ENCRYPTION_KEY: z.string().min(1).max(200).optional(),
+    /** Companies House Public Data API key (HTTP Basic username). Unset → company lookup off. */
+    COMPANIES_HOUSE_API_KEY: z.string().min(1).max(200).optional(),
+    /** The forwarding partner's EORI and name shown in the CDS authorisation step; unset → "to be confirmed". */
+    FORWARDER_EORI: eori.optional(),
+    FORWARDER_NAME: safeString(120).optional(),
   })
   .refine(
     (e) => (e.TRADE_TARIFF_API_KEY === undefined) === (e.TRADE_TARIFF_API_KEY_HEADER === undefined),
@@ -108,6 +117,11 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     INLAND_VAT_ADJUSTMENT_LCL_GBP: blank(source.INLAND_VAT_ADJUSTMENT_LCL_GBP),
     INLAND_VAT_ADJUSTMENT_FCL_GBP: blank(source.INLAND_VAT_ADJUSTMENT_FCL_GBP),
     INLAND_VAT_ADJUSTMENT_AIR_GBP: blank(source.INLAND_VAT_ADJUSTMENT_AIR_GBP),
+    // M2
+    FIELD_ENCRYPTION_KEY: blank(source.FIELD_ENCRYPTION_KEY),
+    COMPANIES_HOUSE_API_KEY: blank(source.COMPANIES_HOUSE_API_KEY),
+    FORWARDER_EORI: blank(source.FORWARDER_EORI),
+    FORWARDER_NAME: blank(source.FORWARDER_NAME),
   });
   return {
     ...parsed,

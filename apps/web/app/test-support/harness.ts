@@ -6,7 +6,7 @@
  * modules read it through `getApp()` after `setAppForTests(app)`.
  */
 import { randomUUID } from 'node:crypto';
-import type { PrismaClient } from '@harbour/db';
+import { generateMasterKey, type PrismaClient } from '@harbour/db'; // M2: generateMasterKey
 import { createAppServices, setAppForTests, type AppServices } from '../services/app.server';
 import type { EmailTransport } from '../services/email.server';
 import { loadEnv } from '../services/env.server';
@@ -16,6 +16,8 @@ import { SECURE_COOKIE_NAME, type RedisSessionClient } from '../services/session
 import { createAuthServices } from '../services/workspace.server';
 
 export const ORIGIN = 'http://localhost';
+/** M2: the field-encryption master key every test app shares (see createTestApp). */
+export const TEST_MASTER_KEY = generateMasterKey();
 
 export interface TestApp {
   app: AppServices;
@@ -45,6 +47,11 @@ export const createTestApp = async (opts: TestAppOptions = {}): Promise<TestApp>
   });
   const env = loadEnv({
     NODE_ENV: 'test',
+    // M2: one key per test run so encrypted fields round-trip. Pass FIELD_ENCRYPTION_KEY yourself
+    // (even as '') to exercise the missing-key guard.
+    ...(opts.env && 'FIELD_ENCRYPTION_KEY' in opts.env
+      ? {}
+      : { FIELD_ENCRYPTION_KEY: TEST_MASTER_KEY }),
     ...(opts.databaseUrl ? { DATABASE_URL: opts.databaseUrl } : {}),
     ...opts.env,
   });
@@ -53,6 +60,10 @@ export const createTestApp = async (opts: TestAppOptions = {}): Promise<TestApp>
   // 'console' / undefined: let createAuthServices pick from env, exactly as production code does.
   const email = opts.email === 'console' || opts.email === undefined ? {} : { email: opts.email };
   const auth = createAuthServices({ env, logger, prisma, redis: opts.redis ?? null, ...email });
+  // M2: production without FIELD_ENCRYPTION_KEY closes the workspace (see app.server.ts).
+  if (base.settings.unavailable && auth.unavailable === null) {
+    auth.unavailable = base.settings.unavailable;
+  }
   const app: AppServices = { ...base, auth, rateLimiter: new InMemoryRateLimiter() };
   setAppForTests(app);
   return { app, logs, lines, prisma };

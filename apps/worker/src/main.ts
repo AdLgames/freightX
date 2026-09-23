@@ -35,14 +35,24 @@ export interface HealthReport {
   queues: Array<{ name: QueueName; lastRun: LastRun | null }>;
 }
 
-const parseArgs = (argv: readonly string[]): { once?: string } => {
+const parseArgs = (argv: readonly string[]): { once?: string; data?: unknown } => {
   const i = argv.indexOf('--once');
   if (i < 0) return {};
   const value = argv[i + 1];
-  return { once: value ?? '' };
+  // M2: `--once eori-verify --data '{"organizationId":"…"}'` for the on-demand jobs.
+  const d = argv.indexOf('--data');
+  let data: unknown;
+  if (d >= 0 && argv[d + 1] !== undefined) {
+    try {
+      data = JSON.parse(argv[d + 1]!);
+    } catch {
+      data = undefined;
+    }
+  }
+  return { once: value ?? '', ...(data === undefined ? {} : { data }) };
 };
 
-const runOnce = async (queueName: string): Promise<number> => {
+const runOnce = async (queueName: string, data?: unknown): Promise<number> => {
   if (!isQueueName(queueName)) {
     process.stderr.write(
       `Unknown queue "${queueName}". Expected one of: ${QUEUE_NAMES.join(', ')}\n`,
@@ -53,7 +63,7 @@ const runOnce = async (queueName: string): Promise<number> => {
   const wiring = buildWiring(env);
   log('job.started', { queue: queueName, mode: 'once' });
   try {
-    const summary = await wiring.runJob(queueName);
+    const summary = await wiring.runJob(queueName, data); // M2: data for on-demand jobs
     log('job.completed', { queue: queueName, mode: 'once', summary });
     return 0;
   } catch (err) {
@@ -118,7 +128,7 @@ const startWorker = async (): Promise<void> => {
           jobName: job.name,
           attempt: job.attemptsMade + 1,
         });
-        return wiring.runJob(name);
+        return wiring.runJob(name, job.data); // M2: on-demand jobs read { organizationId }
       },
       { connection, concurrency: 1 },
     );
@@ -195,7 +205,7 @@ const startWorker = async (): Promise<void> => {
 const main = async (): Promise<void> => {
   const args = parseArgs(process.argv.slice(2));
   if (args.once !== undefined) {
-    process.exitCode = await runOnce(args.once);
+    process.exitCode = await runOnce(args.once, args.data); // M2
     return;
   }
   await startWorker();

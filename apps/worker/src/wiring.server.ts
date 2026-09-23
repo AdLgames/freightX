@@ -21,9 +21,20 @@ import {
   type FetchLike,
   type TariffCacheStore,
 } from '@harbour/adapters';
+// M2 — identity checks (§5.6) need the HMRC adapters, the db package (RLS-scoped store) and the
+// field-encryption key provider.
+import { HmrcEoriChecker, HmrcVatChecker } from '@harbour/adapters';
+import { createKeyProvider, createPrismaClient, type KeyProvider } from '@harbour/db';
 import { z } from 'zod';
 import { ConsoleAlertSink, WebhookAlertSink } from './alerts.js';
+import {
+  PrismaIdentityVerificationStore,
+  UnavailableIdentityVerificationStore,
+} from './identity-store.server.js'; // M2
+import { runEoriVerify } from './jobs/eori-verify.js'; // M2
 import { runFxRefresh, type FxRefreshSummary } from './jobs/fx-refresh.js';
+import { RepeatedErrorTracker, type IdentityVerifySummary } from './jobs/identity-verify.js'; // M2
+import { runVatVerify } from './jobs/vat-verify.js'; // M2
 import { runQuoteExpiry, type QuoteExpirySummary } from './jobs/quote-expiry.js';
 import {
   refreshingCacheView,
@@ -54,6 +65,12 @@ export const envSchema = z.object({
   WORKER_PORT: z.coerce.number().int().min(0).max(65535).default(9090),
   TARIFF_REFRESH_CODES: csvList,
   UK_TRADE_TARIFF_BASE_URL: z.url().optional(),
+  // M2 — identity verification jobs: the database (RLS-scoped, see identity-store.server.ts) and
+  // the SAME field-encryption master key as apps/web. Both optional so the FX/tariff/expiry jobs
+  // keep running without them; the identity jobs then fail with a clear message.
+  DATABASE_URL: z.string().min(1).optional(),
+  FIELD_ENCRYPTION_KEY: z.string().min(1).optional(),
+  HMRC_API_BASE_URL: z.url().optional(),
 });
 export type WorkerEnv = z.infer<typeof envSchema>;
 
@@ -69,10 +86,14 @@ export const readEnv = (source: NodeJS.ProcessEnv = process.env): WorkerEnv => {
 export interface Wiring {
   ports: WorkerPorts;
   tariffCache: TariffCacheStore;
-  runJob: (queue: QueueName) => Promise<JobSummary>;
+  /** `data` is the job payload (M2 on-demand jobs read `{ organizationId }`; the others ignore it). */
+  runJob: (queue: QueueName, data?: unknown) => Promise<JobSummary>;
+  /** M2: null when FIELD_ENCRYPTION_KEY is unset (identity jobs fail with a clear error). */
+  keyProvider: KeyProvider | null;
 }
 
-export type JobSummary = FxRefreshSummary | TariffRefreshSummary | QuoteExpirySummary;
+export type JobSummary =
+  FxRefreshSummary | TariffRefreshSummary | QuoteExpirySummary | IdentityVerifySummary; // M2
 
 export const buildWiring = (
   env: WorkerEnv,
@@ -101,7 +122,24 @@ export const buildWiring = (
     ...(env.UK_TRADE_TARIFF_BASE_URL ? { baseUrl: env.UK_TRADE_TARIFF_BASE_URL } : {}),
   });
 
-  const runJob = async (queue: QueueName): Promise<JobSummary> => {
+  // M2 — identity verification (eori-verify, vat-verify). The store runs every statement inside
+  // withOrgTransaction, so the worker's DB login must be a member of harbour_app (RLS applies).
+  const identityStore = env.DATABASE_URL
+    ? new PrismaIdentityVerificationStore(createPrismaClient({ databaseUrl: env.DATABASE_URL }))
+    : new UnavailableIdentityVerificationStore();
+  const keyChoice = createKeyProvider({
+    masterKey: env.FIELD_ENCRYPTION_KEY,
+    // The worker must share apps/web's key; an ephemeral one could never decrypt anything, so
+    // treat "unset" like production (fail closed) whatever NODE_ENV says.
+    nodeEnv: 'production',
+  });
+  const keyProvider = keyChoice.provider;
+  const hmrcBase = env.HMRC_API_BASE_URL ? { baseUrl: env.HMRC_API_BASE_URL } : {};
+  const eoriChecker = new HmrcEoriChecker({ fetch: fetchImpl, now, ...hmrcBase });
+  const vatChecker = new HmrcVatChecker({ fetch: fetchImpl, now, ...hmrcBase });
+  const identityErrors = new RepeatedErrorTracker();
+
+  const runJob = async (queue: QueueName, data?: unknown): Promise<JobSummary> => {
     switch (queue) {
       case 'fx-refresh':
         return runFxRefresh({ fetch: fetchImpl, store: fxStore, now, alerts });
@@ -109,8 +147,27 @@ export const buildWiring = (
         return runTariffRefresh({ client: tariffClient, codes: hsCodes, now, alerts });
       case 'quote-expiry':
         return runQuoteExpiry({ port: quoteExpiry, now });
+      // M2
+      case 'eori-verify':
+        return runEoriVerify(data, {
+          store: identityStore,
+          keyProvider,
+          checker: eoriChecker,
+          now,
+          alerts,
+          errors: identityErrors,
+        });
+      case 'vat-verify':
+        return runVatVerify(data, {
+          store: identityStore,
+          keyProvider,
+          checker: vatChecker,
+          now,
+          alerts,
+          errors: identityErrors,
+        });
     }
   };
 
-  return { ports, tariffCache, runJob };
+  return { ports, tariffCache, runJob, keyProvider };
 };

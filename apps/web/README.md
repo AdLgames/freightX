@@ -97,6 +97,9 @@ All optional (see the root `.env.example`):
 | `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form      | no default fee; the form says fee terms depend on the forwarder       |
 | `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown        | no adjustment                                                         |
 | `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                        | development / debug                                                   |
+| `FIELD_ENCRYPTION_KEY` (M2)                   | master key for EORI/VAT field encryption (32 bytes, base64)       | ephemeral key + warning; **production: workspace 503**                |
+| `COMPANIES_HOUSE_API_KEY` (M2)                | Companies House lookup in Settings › Organisation                 | lookup off; "sole trader or partnership" only                         |
+| `FORWARDER_EORI` / `FORWARDER_NAME` (M2)      | shown in the CDS "authorise the forwarder" step                   | "{forwarder to be confirmed}"                                         |
 
 `TRADE_TARIFF_API_KEY_HEADER` must be confirmed from the Trade Tariff developer portal before
 use; the key is never logged (only its presence, in `app.started`). The fee and inland-adjustment
@@ -230,6 +233,64 @@ ctx.user.id, action: 'product.create', targetType: 'Product', targetId })` with 
 Passkeys and TOTP (§7.1), invalidating sessions on email change (no email change yet), the
 settings wizard (M2), recent drafts / quick duty check on Home (M4). Magic-link rows are not yet
 cleaned up (TODO for the worker, see packages/db README).
+
+## Settings (M2)
+
+Routes under `/app/settings` (`app.settings.tsx` is the layout; M6 adds `app.settings.billing.tsx`
+inside it): Overview, **Organisation** (`app.settings.organisation.tsx`), **Customs profile**
+(`app.settings.customs.tsx`), **Members** (`app.settings.members.tsx`), **Audit log**
+(`app.settings.audit.tsx`), and the invitation landing page `invite.accept.tsx`. Services live in
+`app/services/settings/`, schemas in `app/validators/settings.ts`. Every POST carries `<CsrfInput/>`
+and an `intent` field; every loader/action starts with `requireOrgContext` and uses `withOrg`.
+
+| Variable                  | Effect                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FIELD_ENCRYPTION_KEY`    | 32 random bytes, base64 (`node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`). Master key of the envelope encryption in `@harbour/db` `crypto.ts`. Production without it → every workspace route is 503 "Workspace not configured" (the calculator is unaffected); development/test → an ephemeral key and a `settings.field_encryption_ephemeral` warning. The worker needs the same value. |
+| `COMPANIES_HOUSE_API_KEY` | Enables "Is your business a limited company?" (search + confirm). HTTP Basic, key as username. Unset → only "I'm a sole trader or partnership".                                                                                                                                                                                                                                                                             |
+| `FORWARDER_EORI`          | The forwarding partner's EORI shown in step 4 (validated as an EORI). Unset → `{forwarder to be confirmed}`.                                                                                                                                                                                                                                                                                                                |
+| `FORWARDER_NAME`          | The forwarding partner's name in the CDS confirmation checkbox. Unset → `{forwarder to be confirmed}`.                                                                                                                                                                                                                                                                                                                      |
+| `REDIS_URL`               | Also picks the BullMQ `JobEnqueuer` (`settings/jobs.server.ts`) that queues `eori-verify` / `vat-verify` for the worker. Unset → an in-memory enqueuer that only logs `jobs.enqueue_skipped`; numbers stay "pending".                                                                                                                                                                                                       |
+
+- **Organisation:** name and base currency (`org.update` audit: `nameChanged`, `baseCurrency`);
+  EORI (`^(GB|XI)\d{12}$`, whitespace stripped, upper-cased) and VAT registration (yes/no + VRN
+  with the check digit). Both numbers are encrypted before they are stored (`identity.server.ts`):
+  the columns hold ciphertext, `eoriLast4` / `vatLast4` are shown, the status goes to `PENDING`
+  and the verification job is queued after the transaction commits. Audit `org.eori.update` /
+  `org.vat.update` carry the last four only. Only OWNER/ADMIN (`org.tax_ids.edit`) may change
+  them; everyone else sees a read-only page. Clearing the VAT registration while the customs
+  profile uses PVA is refused (pre-check + the 0003 trigger as backstop).
+- **Company lookup (ADR-0015 step 1b):** searches Companies House by name, shows "Is this you?"
+  matches, and on confirmation re-reads the company profile from the API (never trusts the form)
+  and stores number/status/type/name/checked-at; "sole trader or partnership" stores a check time
+  with no number. Audit `org.company.confirm` with the number, status and type (public registry
+  data). `isEligibleForFinance` (adapters) is only surfaced as a hint; nothing is gated in M2.
+- **Customs profile:** the wizard's steps 2–4 with the corrected copy (forwarder pays and
+  invoices; fee from the forwarder's terms, `BROKER_DEFERMENT_FEE_PCT`/`_MIN_GBP` prefilled when
+  the profile has none; PVA changes when VAT is paid, not what goods cost; the forwarder's EORI is
+  the one to authorise; CDS authority gates booking, not quoting). PVA needs a VAT registration
+  (friendly field error; the DB trigger is the backstop); own deferment needs a 7-digit DAN; the
+  CDS checkbox sets `cdsAuthorityGranted`, `cdsAuthorityConfirmedAt` and `…ById` and is cleared
+  when the payment method changes away. The DAN is validated, stored in clear (see packages/db
+  README for the encryption follow-up) and never logged or audited. Audit
+  `org.customs_profile.update` (flags and enums) and `org.cds_authority.confirm`.
+- **Members:** list with roles; OWNER/ADMIN (`member.manage`) invite by email + role (only an
+  OWNER may grant OWNER), change roles (never your own; an OWNER may only be demoted by an OWNER;
+  the last OWNER is protected), remove members (bumps `users.sessionEpoch`, which signs that user
+  out everywhere on their next request) and revoke invitations. Invitations: 7-day link
+  `/invite/accept?token=<org id>.<secret>` sent through the `EmailTransport`; only the sha256 of
+  the secret is stored; accepting requires being signed in as that address (a signed-out visitor
+  goes through the magic link and lands back on the invitation). Audit `invitation.create` /
+  `.accept` / `.revoke`, `membership.create` / `.role_change` / `.delete` — ids and roles only.
+- **Audit log:** OWNER/ADMIN (`audit.view`), 25 per page, newest first; actor names resolved on
+  screen only.
+- **Verification status** (`UNVERIFIED` → `PENDING` → `VALID` / `INVALID` / `ERROR`) is written by
+  the worker (apps/worker README "Identity verification jobs"); the page shows the badge and the
+  check time.
+
+Tests: `validators/settings.test.ts`, `services/settings/*.test.ts` (enqueuer, startup guards) and
+`routes/settings-flow.db.test.ts` (with `DATABASE_URL`: encrypted storage, PVA/DAN rules, company
+confirmation, the invitation flow incl. expiry/revoke/wrong address, role rules, member removal
+signing out, cross-tenant negatives and the no-PII log snapshot).
 
 ## Phase 1 TODO (not built — brief §2, §7)
 

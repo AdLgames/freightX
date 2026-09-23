@@ -11,10 +11,13 @@ prisma/migrations/0002_rls_and_guards        hand-written: role, RLS policies, t
 prisma/migrations/0003_customs_profile_and_quote_1_1
                                              generated DDL + hand-written CHECKs/trigger/RLS
 prisma/migrations/0004_auth_sessions         generated: index on magic_link_tokens(expires_at)
+prisma/migrations/0008_org_identity_and_encryption
+                                             M2: generated DDL + hand-written CHECKs/RLS (invitations)
 src/client.ts     createPrismaClient()       one pool per process
 src/tenancy.ts    forOrganization(), withOrgTransaction(), scopeArgs()
 src/rbac.ts       can(role, action), assertCan()
 src/audit.ts      recordAudit(tx, entry)
+src/crypto.ts     M2: envelope field encryption (encryptField, KeyProvider, rewrapDataKey)
 src/stores.ts     PrismaTariffCacheStore, PrismaFxRateStore, PrismaEmailSignupRepository
 generated/        Prisma client output — gitignored, run `pnpm generate`
 ```
@@ -54,6 +57,10 @@ Copy `.env.example` to `.env` for local work. Prisma reads `DATABASE_URL` from i
 prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <shadow>
 --script`. Sessions live in Redis, so the only change is an index for the magic-link cleanup
   below.
+- `0008_org_identity_and_encryption` (M2) = generated part (`prisma migrate diff
+--from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma
+--shadow-database-url <shadow> --script`) + hand-written CHECKs, RLS and grants for the new tenant
+  table `invitations`. Numbered 0008 to leave 0005–0007 to the parallel M5/M6 milestones.
 - **Shadow database (fixed).** 0002's `REVOKE ... "_prisma_migrations"` is guarded with
   `to_regclass`, so `migrate dev` and `migrate diff --from-migrations` can replay all migrations
   into a shadow database. The guard was added before any non-throwaway database applied 0002.
@@ -304,3 +311,60 @@ internal ids (TEXT cannot be compared with `::uuid` in policies); snake_case `@@
 composite foreign keys `(child_fk, organization_id) → parent(id, organization_id)` so a
 denormalised `organization_id` can never disagree with its parent — the trigger on `quote_lines`
 relies on that.
+
+## Field encryption (M2, §7.3)
+
+`src/crypto.ts` implements envelope encryption for sensitive columns; today
+`organizations.eori_number` and `vat_number` (written only by apps/web
+`settings/identity.server.ts`, read by the worker's `eori-verify` / `vat-verify` jobs).
+
+```
+FIELD_ENCRYPTION_KEY (32 bytes, base64; KeyProvider = EnvKeyProvider)
+  └─ wraps ─▶ per-organisation data key  →  organizations.data_key_ciphertext
+                └─ encrypts ─▶ field values  →  eori_number, vat_number
+```
+
+- AES-256-GCM, random 12-byte IV, 16-byte tag. Ciphertext format `v1:<b64 iv>:<b64 tag>:<b64 data>`
+  (`CIPHERTEXT_RE`; the `v1` prefix lets a later format coexist). AAD = `<organizationId>:<field>`
+  (field names in `ORGANIZATION_ENCRYPTED_FIELDS`, part of the AAD, never rename), so a ciphertext
+  copied to another organisation or column fails to decrypt. Wrapped data keys use a fixed AAD.
+- The data key is generated on first use and stored with a conditional
+  `UPDATE … WHERE data_key_ciphertext IS NULL` (`prismaDataKeyStore`), so concurrent first uses
+  converge. `orgFieldCipher(provider, store, orgId)` resolves it once per transaction.
+- `eori_last4` / `vat_last4` are kept in clear for display; audit metadata carries the last four
+  only. Nothing here logs; never log plaintext or ciphertext.
+- **Key rotation:** `rewrapDataKey(wrapped, fromProvider, toProvider)` re-wraps one organisation's
+  data key under a new master key; field ciphertexts are untouched. A rotation job iterates
+  organisations as the maintenance role (setting `app.current_org` per row) and writes the result
+  back. Deploy the new key to web and worker, run the job, retire the old key.
+- **KMS (TODO, decision (v)):** `KeyProvider` is the seam. A `KmsKeyProvider` implements only
+  `wrapDataKey` / `unwrapDataKey` (KMS Encrypt/Decrypt); field encryption stays local.
+- Production without `FIELD_ENCRYPTION_KEY` closes the workspace (apps/web README "Settings (M2)").
+  Development/test without it get an ephemeral key; values encrypted under it are unreadable after
+  a restart, and the app treats an undecryptable or non-ciphertext value as "not set".
+- The DAN (`customs_profiles.dan_number`) is **not** encrypted yet. The migration that encrypts it
+  must drop `customs_profiles_dan_number_format` (ciphertext does not match `^[0-9]{7}$`) and give
+  `CustomsProfile` its own encrypted-field list. Until then it is validated by zod, never logged,
+  never in audit metadata.
+- `eori_number` / `vat_number` have no ciphertext CHECK on purpose: 0003's tests write plaintext
+  VAT numbers to exercise the PVA trigger, which only asks `vat_number IS NOT NULL` and keeps
+  working with ciphertext.
+
+## Invitations and session epochs (M2)
+
+- `invitations` (tenant table, RLS as the others): `email` lower-cased, `email_hash` = sha256 for
+  "already invited?" lookups, `token_hash` = sha256 of the link secret (the link is
+  `/invite/accept?token=<organisation id>.<secret>`; the id selects the RLS context for the
+  lookup), 7-day expiry (`invitations_expiry_window`), accepted xor revoked.
+- `users.session_epoch`: every session records the epoch it started under; removing a member
+  increments it, and `requireUser` signs out any session with a stale epoch. Bump it for any
+  future "sign out everywhere" (email change, §7.1).
+- Cross-tenant tests: `apps/web/app/routes/settings-flow.db.test.ts` (invitations and audit rows
+  invisible from another organisation; a token under another organisation's id finds nothing).
+
+## Worker database access (M2)
+
+The worker's identity jobs read and write `organizations` through `withOrgTransaction(orgId)` —
+the same RLS context the web app uses — so its login role is a member of `harbour_app`, not a
+BYPASSRLS service role. A future cross-organisation sweep (quote expiry, key rotation) needs its
+own maintenance role and policy, as noted under "Tenancy contract".

@@ -81,7 +81,8 @@ export type AlertCode =
   | 'FX_ECB_FETCH_FAILED'
   | 'FX_ECB_PARSE_FAILED'
   | 'TARIFF_REFRESH_DEGRADED'
-  | 'JOB_FAILED';
+  | 'JOB_FAILED'
+  | 'IDENTITY_VERIFY_REPEATED_ERROR'; // M2: eori-verify / vat-verify hit ERROR 3× in a row for one org
 
 export interface AlertSink {
   alert(

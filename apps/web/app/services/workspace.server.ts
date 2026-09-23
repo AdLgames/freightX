@@ -21,7 +21,7 @@ import {
  *   production and no APP_URL      → /login: "Sign-in is not available yet" (503). Links are never
  *                                    built from the request's Host header in production.
  */
-export type WorkspaceUnavailable = 'NO_DATABASE' | 'NO_SESSION_STORE';
+export type WorkspaceUnavailable = 'NO_DATABASE' | 'NO_SESSION_STORE' | 'NO_FIELD_ENCRYPTION_KEY'; // M2: production without FIELD_ENCRYPTION_KEY (§7.3), set in app.server.ts
 
 export interface AuthServices {
   unavailable: WorkspaceUnavailable | null;

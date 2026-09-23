@@ -1,0 +1,8 @@
+[
+  {
+    "_comment": "HAND-AUTHORED SAMPLE: a well-formed EORI that HMRC does not recognise (valid: false, no companyDetails). Not a live recording.",
+    "eori": "GB000000000000",
+    "valid": false,
+    "processingDate": "2026-09-23T10:15:30.000Z"
+  }
+]

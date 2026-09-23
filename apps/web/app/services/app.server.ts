@@ -16,6 +16,7 @@ import { createRedisClient } from './redis.server';
 import { createTariffClient } from './tariff.server';
 import { createTurnstile, type TurnstileVerifier } from './turnstile.server';
 import { createAuthServices, type AuthServices } from './workspace.server';
+import { createSettingsServices, type SettingsServices } from './settings/index.server'; // M2
 
 /**
  * Composition root. Built once per process (memoised on `globalThis` so `react-router dev`
@@ -40,6 +41,8 @@ export interface AppServices {
   startedAt: Date;
   /** Sign-in, sessions and the workspace's database access (M1). See workspace.server.ts. */
   auth: AuthServices;
+  /** M2: field encryption, Companies House lookup, job enqueuer, forwarder details. See settings/index.server.ts. */
+  settings: SettingsServices;
 }
 
 export interface AppOverrides {
@@ -71,6 +74,10 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     redis,
     prisma: env.DATABASE_URL ? getPrisma(env.DATABASE_URL) : null,
   });
+  // M2 — settings services. In production a missing FIELD_ENCRYPTION_KEY closes the workspace
+  // (requireWorkspace answers 503); the calculator never looks at this.
+  const settings = createSettingsServices({ env, logger });
+  if (settings.unavailable && auth.unavailable === null) auth.unavailable = settings.unavailable;
   const turnstile = createTurnstile({
     siteKey: env.TURNSTILE_SITE_KEY,
     secretKey: env.TURNSTILE_SECRET_KEY,
@@ -101,6 +108,10 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
       pricing.brokerDefermentDefaults.feePct !== null ||
       pricing.brokerDefermentDefaults.minimumGbp !== null,
     inlandVatAdjustmentModes: Object.keys(pricing.inlandVatAdjustmentGbp),
+    // M2 — presence only, never the key.
+    fieldEncryption: settings.fieldEncryption,
+    companiesHouse: settings.companiesHouse !== null,
+    jobEnqueuer: settings.jobs.backend,
   });
 
   return {
@@ -119,6 +130,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     calcVersion: CALC_VERSION,
     startedAt,
     auth,
+    settings, // M2
   };
 };
 
