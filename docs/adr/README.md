@@ -16,6 +16,7 @@ accepted; a change of mind gets a new ADR that supersedes the old one.
 | [0007](0007-blocking-warning-set.md)                   | The blocking warning set                                       | Proposed | 2026-09-23 |
 | [0008](0008-phase-0-fx-and-tariff-sources.md)          | Phase 0 FX and tariff sources                                  | Accepted | 2026-09-23 |
 | [0009](0009-tenancy-defence-in-depth.md)               | Tenancy defence in depth                                       | Accepted | 2026-09-23 |
+| [0010](0010-sailing-schedules-read-only.md)            | Sailing schedules: read-only visibility before booking         | Proposed | 2026-09-23 |
 
 "Proposed" ADRs record what the code does today but await confirmation from the founder or the
 customs practitioner (see `docs/decisions-needed.md`).

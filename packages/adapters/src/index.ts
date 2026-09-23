@@ -10,3 +10,4 @@ export * from './freight/provider.js';
 export * from './freight/rate-sheet.js';
 export * from './freight/resilient.js';
 export * from './freight/searates.js';
+export * from './schedules/index.js';
