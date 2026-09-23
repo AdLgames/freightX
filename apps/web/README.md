@@ -67,11 +67,44 @@ All optional (see the root `.env.example`):
 | `FX_SEED_CSV`                                 | HMRC monthly CSV loaded into the FX store at startup           | adapters **sample** CSV, loud `fx.sample_rates` warning               |
 | `RATE_SHEET_PATH`                             | freight rate sheet JSON                                        | `packages/adapters/rate-sheets/v1.json`, resolved through the package |
 | `SESSION_SECRET`                              | unused in Phase 0                                              | —                                                                     |
+| `TRADE_TARIFF_API_KEY` / `…_HEADER`           | key sent in that header on every tariff call (both or neither) | anonymous calls; only one of the two set → startup fails              |
+| `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form   | no default fee; the form says fee terms depend on the forwarder       |
+| `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown     | no adjustment                                                         |
 | `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                     | development / debug                                                   |
+
+`TRADE_TARIFF_API_KEY_HEADER` must be confirmed from the Trade Tariff developer portal before
+use; the key is never logged (only its presence, in `app.started`). The fee and inland-adjustment
+values are decimal strings with no built-in defaults: the proposed £170 LCL / £550 FCL inland
+figures are unverified and deliberately not hard-coded. The rate sheet always gives the UK leg,
+so the inland adjustment only affects fallback freight providers today.
 
 The client IP for rate limiting is read from `Fly-Client-IP`, `CF-Connecting-IP`, `X-Real-IP`
 or the first `X-Forwarded-For` entry — deploy behind a proxy that sets one, or every visitor
 shares a single bucket. The IP is hashed before it becomes a bucket key and is never logged.
+
+## Calculator inputs added with engine 1.1
+
+- **Assists** (tooling, moulds, design paid separately): either a GBP amount for this shipment,
+  or total cost + lifetime units, apportioned as cost × quantity ÷ units (Decimal, 2 dp half-up).
+  Both at once is a field error. Added to the customs value (dutiable) and to the landed cost.
+- **How duty is paid**: through the forwarder (broker deferment, default; optional fee % and
+  minimum, prefilled from env), own duty deferment account (7-digit DAN + a required "I have
+  authorised my forwarder's EORI" confirmation, which only drives a CDS reminder in the result),
+  or CDS cash account. Fee terms apply only to broker deferment.
+- **Postponed VAT accounting**: passed to the engine as ticked even without "VAT registered", so
+  the `PVA_REQUIRES_VAT_REGISTRATION` warning shows instead of the tick being silently ignored.
+- The result adds the assists row, the deferment fee, and "Cash needed at the border" (duty + VAT
+  actually paid at the border; VAT excluded under PVA).
+
+## What is and is not persisted
+
+Phase 0 persists nothing from a calculation. Inputs are validated, priced and echoed back into
+the form in the response, then discarded. The DAN is checked for format only: the validator drops
+it before the pipeline, so it never reaches the quote, the logs or any store (and `dan` keys are
+redacted by the logger regardless). The only calculator log line is `calculator.completed`, with
+coarse fields (status, incoterm, mode, ports, HS chapter, duty-payment method, PVA flag, assist
+method, warning codes) and no IP, email, EORI, VAT number or DAN. The only data kept is the email
+signup list (see `db.server.ts`).
 
 ## What is stubbed or sample-only
 

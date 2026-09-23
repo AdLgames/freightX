@@ -16,7 +16,14 @@ import {
   type TariffInput,
 } from '@harbour/engine';
 import { Decimal } from 'decimal.js';
-import { DOOR_INCOTERMS, parseLaneKey, type CalculatorInput } from '../validators/calculator';
+import {
+  DOOR_INCOTERMS,
+  parseLaneKey,
+  type AssistResolution,
+  type CalculatorInput,
+  type DutyPaymentMethod,
+} from '../validators/calculator';
+import type { PricingConfig } from './env.server';
 
 /**
  * §5.1 pipeline for the public calculator:
@@ -35,7 +42,24 @@ export interface PipelineDeps {
   tariff: TariffLookupClient;
   fxStore: FxRateStore;
   freight: FreightRateProvider;
+  /** Deferment fee defaults and inland VAT adjustments (env). Absent → none. */
+  pricing?: PricingConfig;
   now?: () => Date;
+}
+
+/** Broker deferment fee terms actually used, and whether any came from configured defaults. */
+export interface BrokerFeeTerms {
+  feePct: string;
+  minimumGbp: string;
+  usedDefaults: boolean;
+}
+
+export interface DutyPaymentSummary {
+  method: DutyPaymentMethod;
+  /** BROKER_DEFERMENT only; null when no terms were entered or configured (no fee included). */
+  brokerFeeTerms: BrokerFeeTerms | null;
+  /** OWN_DAN only: the user confirmed their forwarder's EORI is authorised. The DAN is not kept. */
+  danAuthorised: boolean;
 }
 
 export type StageName =
@@ -70,6 +94,8 @@ export type PipelineOutcome =
       freight: { transitDays: number | null; assumptions: string[] };
       tariff: TariffSummary;
       line: { unitVolumeCbm: string; totalWeightKg: string; totalVolumeCbm: string };
+      assists: AssistResolution | null;
+      dutyPayment: DutyPaymentSummary;
     };
 
 const D = (s: string): Decimal => new Decimal(s);
@@ -96,6 +122,31 @@ export const resolveUnitVolumeCbm = (input: CalculatorInput): { cbm: string; not
     cbm: unit.toFixed(4),
     note: `Carton ${l}×${w}×${h} cm = ${cartonCbm.toDecimalPlaces(4).toFixed(4)} CBM ÷ ${per} units = ${unit.toFixed(4)} CBM per unit.`,
   };
+};
+
+const assistNote = (a: AssistResolution | null): string => {
+  if (!a) return '';
+  if (a.method === 'DIRECT') return ` Assists: £${a.amountGbp} entered for this shipment.`;
+  return ` Assists: £${a.totalCostGbp} × ${a.shipmentQuantity} ÷ ${a.lifetimeUnits} units = £${a.amountGbp}.`;
+};
+
+/**
+ * Fee terms for broker deferment: what the user entered, else the configured default. When only
+ * one of the two is known the other is 0 (fee = max(minimum, pct × outlay)). Nothing known →
+ * null, and the result says fee terms depend on the forwarder (we never invent numbers).
+ */
+export const resolveBrokerFeeTerms = (
+  input: Pick<CalculatorInput, 'brokerFeePct' | 'brokerMinimumGbp'>,
+  pricing: PricingConfig | undefined,
+): BrokerFeeTerms | null => {
+  const defaults = pricing?.brokerDefermentDefaults;
+  const pct = input.brokerFeePct ?? defaults?.feePct ?? null;
+  const min = input.brokerMinimumGbp ?? defaults?.minimumGbp ?? null;
+  if (pct === null && min === null) return null;
+  const usedDefaults =
+    (input.brokerFeePct === undefined && pct !== null) ||
+    (input.brokerMinimumGbp === undefined && min !== null);
+  return { feePct: pct ?? '0', minimumGbp: min ?? '0', usedDefaults };
 };
 
 type TariffStage =
@@ -203,7 +254,7 @@ export const runQuotePipeline = async (
   stages.push({
     stage: 'resolveProducts',
     ok: true,
-    note: `${volume.note} Shipment: ${totalWeightKg} kg, ${totalVolumeCbm} CBM.`,
+    note: `${volume.note} Shipment: ${totalWeightKg} kg, ${totalVolumeCbm} CBM.${assistNote(input.assists)}`,
   });
 
   // ---------- resolveFx ----------
@@ -293,7 +344,15 @@ export const runQuotePipeline = async (
     unitWeightKg: input.unitWeightKg,
     unitVolumeCbm: volume.cbm,
     preferenceClaimed: input.preferenceClaimed,
+    ...(input.assists ? { assistsGbp: input.assists.amountGbp } : {}),
     tariff: tariffStage.tariff,
+  };
+  const brokerFeeTerms =
+    input.dutyPayment === 'BROKER_DEFERMENT' ? resolveBrokerFeeTerms(input, deps.pricing) : null;
+  const dutyPayment: DutyPaymentSummary = {
+    method: input.dutyPayment,
+    brokerFeeTerms,
+    danAuthorised: input.dutyPayment === 'OWN_DAN' && input.danAuthorised,
   };
   let supplierFreight: SupplierFreightInput | null = null;
   if (DOOR_INCOTERMS.includes(input.incoterm) && input.supplierFreightTotalGbp !== undefined) {
@@ -316,6 +375,13 @@ export const runQuotePipeline = async (
     insurance:
       input.insurancePremiumGbp !== undefined ? { premiumGbp: input.insurancePremiumGbp } : null,
     vatRegistered: input.vatRegistered,
+    // Passed through as ticked even when not VAT registered: the engine then warns
+    // PVA_REQUIRES_VAT_REGISTRATION and keeps VAT at the border (fail visibly, not silently).
+    vatPostponed: input.vatPostponed,
+    brokerDeferment: brokerFeeTerms
+      ? { feePct: brokerFeeTerms.feePct, minimumGbp: brokerFeeTerms.minimumGbp }
+      : null,
+    inlandVatAdjustmentGbp: deps.pricing?.inlandVatAdjustmentGbp[lane.mode] ?? null,
     asOf: now().toISOString(),
   };
   const result = computeQuote(quoteInput);
@@ -345,5 +411,7 @@ export const runQuotePipeline = async (
     freight: { transitDays, assumptions },
     tariff: tariffStage.summary,
     line: { unitVolumeCbm: volume.cbm, totalWeightKg, totalVolumeCbm },
+    assists: input.assists,
+    dutyPayment,
   };
 };

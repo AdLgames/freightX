@@ -140,6 +140,17 @@ export const eori = z
   .pipe(z.string().regex(EORI_PATTERN, 'EORI must be GB or XI followed by 12 digits.'));
 
 /**
+ * HMRC duty deferment account number (DAN): exactly 7 digits. Validated only; the calculator
+ * never stores or logs it (Phase 0 persists nothing).
+ */
+export const DAN_PATTERN = /^\d{7}$/;
+
+export const danNumber = z
+  .string()
+  .trim()
+  .regex(DAN_PATTERN, 'Your deferment account number (DAN) is 7 digits.');
+
+/**
  * UK VAT registration number check digit (HMRC "modulus 97" and "9755" algorithms).
  * Takes the 9-digit core (the first 9 digits after "GB"). The first 7 digits are weighted
  * 8,7,6,5,4,3,2 and summed; 97 is subtracted until the result is negative; the negative of that

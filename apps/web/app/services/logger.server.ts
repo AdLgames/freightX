@@ -33,7 +33,8 @@ export const parseLogLevel = (raw: string | undefined, fallback: LogLevel = 'inf
 
 // ---------- redaction ----------
 
-const SENSITIVE_KEY = /^(email|eori|vat|vatNumber|eoriNumber|originalName)$/i;
+const SENSITIVE_KEY =
+  /^(email|eori|vat|vatNumber|eoriNumber|originalName|dan|danNumber|apiKey|trade_tariff_api_key)$/i;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 // EORI before VAT: an EORI "GB123456789000" contains a VAT-shaped prefix.
 const EORI = /\b(GB|XI)\d{12}\b/g;
@@ -46,9 +47,10 @@ export const redactString = (s: string): string =>
   s.replace(EMAIL, '[EMAIL]').replace(EORI, '$1[EORI]').replace(VAT, 'GB[VAT]');
 
 /**
- * Deep-copy `value` masking PII: any key named email/eori/vat/vatNumber/eoriNumber/originalName
- * (case-insensitive) is replaced wholesale; every string is scrubbed of email addresses and
- * EORI/VAT numbers. Safe on cycles, Errors, Dates, arrays and Maps.
+ * Deep-copy `value` masking PII: any key named email/eori/vat/vatNumber/eoriNumber/originalName,
+ * dan/danNumber (deferment account) or apiKey/TRADE_TARIFF_API_KEY (case-insensitive) is
+ * replaced wholesale; every string is scrubbed of email addresses and EORI/VAT numbers. Safe on
+ * cycles, Errors, Dates, arrays and Maps.
  */
 export const redact = (
   value: unknown,

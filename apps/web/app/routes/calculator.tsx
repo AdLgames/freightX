@@ -9,7 +9,13 @@ import { runQuotePipeline } from '../services/quote-pipeline.server';
 import { CALCULATOR_LIMIT } from '../services/rate-limit.server';
 import { clientIp, readForm } from '../services/request.server';
 import { TURNSTILE_FIELD } from '../services/turnstile.server';
-import { INCOTERMS, buildCalculatorSchema, formDataToRecord } from '../validators/calculator';
+import {
+  DUTY_PAYMENT_LABELS,
+  DUTY_PAYMENT_METHODS,
+  INCOTERMS,
+  buildCalculatorSchema,
+  formDataToRecord,
+} from '../validators/calculator';
 import { CURRENCIES, fieldErrors } from '../validators/common';
 
 export const meta: Route.MetaFunction = () => [{ title: 'Landed-cost calculator — Harbour' }];
@@ -21,6 +27,11 @@ export const loader = async () => {
     currencies: CURRENCIES,
     countries: ORIGIN_COUNTRIES,
     incoterms: INCOTERMS,
+    dutyPaymentMethods: DUTY_PAYMENT_METHODS.map((m) => ({
+      value: m,
+      label: DUTY_PAYMENT_LABELS[m],
+    })),
+    brokerDefaults: app.pricing.brokerDefermentDefaults,
     turnstileSiteKey: app.turnstile.enabled ? app.turnstile.siteKey : null,
     rateSheet: {
       version: app.rateSheet.version,
@@ -115,6 +126,7 @@ export const action = async ({ request }: Route.ActionArgs) => {
     tariff: app.tariff,
     fxStore: app.stores.fxStore,
     freight: app.freight,
+    pricing: app.pricing,
   });
 
   switch (outcome.kind) {
@@ -156,6 +168,10 @@ export const action = async ({ request }: Route.ActionArgs) => {
         hsVerified: outcome.tariff.verified,
         currency: parsed.data.currency,
         quantity: parsed.data.quantity,
+        // Method only — the DAN is dropped at validation and never logged.
+        dutyPayment: parsed.data.dutyPayment,
+        vatPostponed: q.totals.vatPostponed,
+        assists: parsed.data.assists?.method ?? null,
         fxSource: q.fxSource,
         rateSource: q.rateSource,
         calcVersion: q.calcVersion,
@@ -254,13 +270,16 @@ function Check({
   label,
   values,
   hint,
+  errors,
 }: {
   name: string;
   label: string;
   values: Values;
   hint?: string | undefined;
+  errors?: Errors;
 }) {
-  return (
+  const error = errors?.[name];
+  const box = (
     <div className="check">
       <input
         type="checkbox"
@@ -268,11 +287,22 @@ function Check({
         name={name}
         value="on"
         defaultChecked={values[name] === 'on'}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${name}-error` : undefined}
       />
       <label htmlFor={name}>
         {label}
         {hint ? <span className="hint">{hint}</span> : null}
       </label>
+    </div>
+  );
+  if (!error) return box;
+  return (
+    <div className="field has-error">
+      <span className="field-error" id={`${name}-error`}>
+        {error}
+      </span>
+      {box}
     </div>
   );
 }
@@ -282,6 +312,16 @@ export default function Calculator({ loaderData, actionData }: Route.ComponentPr
   const errors: Errors = actionData?.errors ?? {};
   const candidates = actionData?.hsCandidates ?? null;
   const outcome = actionData?.outcome ?? null;
+  const brokerDefaults = loaderData.brokerDefaults;
+  const hasBrokerDefaults = brokerDefaults.feePct !== null || brokerDefaults.minimumGbp !== null;
+  // Prefill the forwarder fee terms with the configured defaults on first render only.
+  const paymentValues: Values = actionData
+    ? values
+    : {
+        ...values,
+        brokerFeePct: brokerDefaults.feePct ?? '',
+        brokerMinimumGbp: brokerDefaults.minimumGbp ?? '',
+      };
 
   return (
     <>
@@ -553,11 +593,127 @@ export default function Calculator({ loaderData, actionData }: Route.ComponentPr
         </fieldset>
 
         <fieldset>
+          <legend>Tooling, moulds and design paid separately (assists)</legend>
+          <p className="hint">
+            If you paid the supplier (or someone else) for moulds, tooling, design or artwork
+            outside the unit price, HMRC counts it in the customs value, so duty and VAT are due on
+            it. Leave this section blank if there is none. Use one of the two options, not both.
+          </p>
+          <Text
+            name="assistsGbp"
+            label="Assist amount for this shipment (GBP)"
+            hint="The share of the tooling cost that belongs to the units in this shipment."
+            values={values}
+            errors={errors}
+            className="narrow"
+          />
+          <div className="subgroup">
+            <p className="label">Or let us work out this shipment’s share</p>
+            <span className="hint">
+              Share = total cost × this shipment’s quantity ÷ total units. The quantity comes from
+              the Quantity field above.
+            </span>
+            <div className="inline-fields">
+              <Text
+                name="assistTotalCostGbp"
+                label="Total assist cost (GBP)"
+                values={values}
+                errors={errors}
+                className="narrow"
+              />
+              <Text
+                name="assistTotalUnits"
+                label="Total units it will be spread over"
+                hint="The lifetime production the supplier quotes for the mould."
+                values={values}
+                errors={errors}
+                inputMode="numeric"
+                className="narrow"
+              />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Paying duty and import VAT</legend>
+          <Field
+            name="dutyPayment"
+            label="How will duty be paid?"
+            hint="Your forwarder can pay HMRC for you, or you can pay from your own CDS accounts."
+            errors={errors}
+          >
+            {(aria) => (
+              <select
+                {...aria}
+                name="dutyPayment"
+                defaultValue={values.dutyPayment ?? 'BROKER_DEFERMENT'}
+              >
+                {loaderData.dutyPaymentMethods.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+
+          <div className="subgroup">
+            <p className="label">If paying through the forwarder: their deferment fee (optional)</p>
+            <span className="hint">
+              {hasBrokerDefaults
+                ? 'Forwarders charge a fee for paying duty and VAT on your behalf. Prefilled with our default terms; replace them with your forwarder’s. Blank uses the default.'
+                : 'Fee terms depend on your forwarder. Enter theirs to include the fee; left blank, no deferment fee is included.'}
+            </span>
+            <div className="inline-fields">
+              <Text
+                name="brokerFeePct"
+                label="Fee (% of duty and VAT paid)"
+                values={paymentValues}
+                errors={errors}
+                className="narrow"
+              />
+              <Text
+                name="brokerMinimumGbp"
+                label="Minimum fee (GBP)"
+                values={paymentValues}
+                errors={errors}
+                className="narrow"
+              />
+            </div>
+          </div>
+
+          <div className="subgroup">
+            <p className="label">If paying from your own duty deferment account</p>
+            <Text
+              name="dan"
+              label="Deferment account number (DAN)"
+              hint="7 digits. Checked for format only — this calculator does not save it or anything else you enter."
+              values={values}
+              errors={errors}
+              inputMode="numeric"
+              className="narrow"
+            />
+            <Check
+              name="danAuthorised"
+              label="I have authorised my forwarder’s EORI to use my DAN in my CDS account"
+              values={values}
+              errors={errors}
+            />
+          </div>
+        </fieldset>
+
+        <fieldset>
           <legend>Options</legend>
           <Check
             name="vatRegistered"
             label="My business is VAT registered"
-            hint="Import VAT is then usually recoverable through postponed VAT accounting."
+            hint="Import VAT is then usually recoverable on your VAT return."
+            values={values}
+          />
+          <Check
+            name="vatPostponed"
+            label="I use postponed VAT accounting (PVA)"
+            hint="Only for VAT-registered businesses. Import VAT goes on your VAT return instead of being paid at the border, so less cash is needed up front."
             values={values}
           />
           <Text
@@ -630,6 +786,11 @@ export default function Calculator({ loaderData, actionData }: Route.ComponentPr
             <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer />
           </>
         ) : null}
+
+        <p className="hint">
+          Phase 0 preview: nothing you enter is saved. Each calculation is worked out and shown to
+          you, then discarded.
+        </p>
 
         <button type="submit" className="button">
           Calculate landed cost

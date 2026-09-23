@@ -496,3 +496,23 @@ pre.stack {
 .cf-turnstile {
   margin: 0 0 20px;
 }
+
+.subgroup {
+  border-left: 4px solid var(--line);
+  padding-left: 16px;
+  margin: 0 0 24px;
+  max-width: 40em;
+}
+
+.subgroup > .label {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.subgroup .check {
+  margin-top: 16px;
+}
+
+.notes {
+  max-width: 40em;
+}

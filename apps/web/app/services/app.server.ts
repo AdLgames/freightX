@@ -1,7 +1,13 @@
 import type { RateSheetFreightProvider, UkTradeTariffClient } from '@harbour/adapters';
 import { CALC_VERSION } from '@harbour/engine';
 import { createStores, type Stores } from './db.server';
-import { loadEnv, type Env } from './env.server';
+import {
+  loadEnv,
+  pricingConfigFromEnv,
+  tariffApiKeyFromEnv,
+  type Env,
+  type PricingConfig,
+} from './env.server';
 import { seedFxStore, type FxSeedSummary } from './fx.server';
 import { loadFreightProvider, type LaneOption, type RateSheetMeta } from './freight.server';
 import { createLogger, type Logger } from './logger.server';
@@ -26,6 +32,8 @@ export interface AppServices {
   rateSheet: RateSheetMeta;
   lanes: LaneOption[];
   fx: FxSeedSummary;
+  /** Deferment fee defaults and inland VAT adjustments from env (not user input). */
+  pricing: PricingConfig;
   calcVersion: string;
   startedAt: Date;
 }
@@ -54,7 +62,9 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     logger,
     production: env.NODE_ENV === 'production',
   });
-  const tariff = createTariffClient({ cache: stores.tariffCache });
+  const tariffApiKey = tariffApiKeyFromEnv(env);
+  const tariff = createTariffClient({ cache: stores.tariffCache, apiKey: tariffApiKey });
+  const pricing = pricingConfigFromEnv(env);
   const { provider, meta, lanes } = loadFreightProvider({
     rateSheetPath: env.RATE_SHEET_PATH,
     logger,
@@ -70,6 +80,12 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     turnstile: turnstile.enabled,
     fxSource: fx.source,
     stores: stores.backend,
+    // Presence only — the key itself is never logged.
+    tariffApiKey: tariffApiKey !== null,
+    brokerDefermentDefaults:
+      pricing.brokerDefermentDefaults.feePct !== null ||
+      pricing.brokerDefermentDefaults.minimumGbp !== null,
+    inlandVatAdjustmentModes: Object.keys(pricing.inlandVatAdjustmentGbp),
   });
 
   return {
@@ -84,6 +100,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     rateSheet: meta,
     lanes,
     fx,
+    pricing,
     calcVersion: CALC_VERSION,
     startedAt,
   };
