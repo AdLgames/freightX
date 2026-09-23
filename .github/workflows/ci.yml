@@ -77,6 +77,10 @@ jobs:
         # Needs network access to binaries.prisma.sh for the query engine; fine on GitHub runners.
         run: pnpm --filter @harbour/db run generate
 
+      - name: Build workspace packages
+        # engine/adapters/db export only ./dist, so the web and worker typecheck/lint need them built.
+        run: pnpm run build:packages
+
       - name: Format check
         run: pnpm run format:check
 

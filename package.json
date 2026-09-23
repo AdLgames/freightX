@@ -10,7 +10,7 @@
   "scripts": {
     "build": "pnpm -r --filter './packages/**' run build && pnpm --filter @harbour/web run build",
     "dev": "pnpm --filter @harbour/web run dev",
-    "typecheck": "pnpm -r run typecheck",
+    "typecheck": "pnpm run build:packages && pnpm -r run typecheck",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -18,7 +18,8 @@
     "test:watch": "vitest",
     "db:generate": "pnpm --filter @harbour/db run generate",
     "db:migrate": "pnpm --filter @harbour/db run migrate:deploy",
-    "audit:ci": "pnpm audit --audit-level=high --prod"
+    "audit:ci": "pnpm audit --audit-level=high --prod",
+    "build:packages": "pnpm -r --filter \"./packages/**\" run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
