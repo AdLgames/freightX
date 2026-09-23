@@ -39,6 +39,10 @@ export const TENANT_MODELS = [
   'AuditLog',
   'OutboxEvent',
   'CustomsProfile',
+  // M3 (ADR-0012)
+  'PickupLocation',
+  'PaymentTerms',
+  'PayoutMethod',
 ] as const;
 export type TenantModel = (typeof TENANT_MODELS)[number];
 
@@ -69,6 +73,10 @@ export const TENANT_TABLES: Readonly<Record<TenantModel, string>> = {
   AuditLog: 'audit_logs',
   OutboxEvent: 'outbox_events',
   CustomsProfile: 'customs_profiles',
+  // M3 (ADR-0012)
+  PickupLocation: 'pickup_locations',
+  PaymentTerms: 'payment_terms',
+  PayoutMethod: 'payout_methods',
 };
 
 export const isTenantModel = (model: string): model is TenantModel =>

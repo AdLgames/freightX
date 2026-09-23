@@ -5,7 +5,18 @@ import { z } from 'zod';
  * validated as decimal STRINGS and never coerced to `number` (ADR-0003).
  */
 
-export const CURRENCIES = ['GBP', 'USD', 'EUR', 'CNY', 'INR', 'TRY', 'VND', 'BDT', 'PKR'] as const;
+export const CURRENCIES = [
+  'GBP',
+  'USD',
+  'EUR',
+  'CNY',
+  'INR',
+  'TRY',
+  'VND',
+  'BDT',
+  'PKR',
+  'JPY',
+] as const; // M3: JPY (HMRC publishes a monthly rate; UX spec "Data notes")
 export type Currency = (typeof CURRENCIES)[number];
 
 const HTML_CHARS = /[<>]/;

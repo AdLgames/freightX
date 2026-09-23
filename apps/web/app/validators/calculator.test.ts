@@ -116,7 +116,7 @@ describe('calculator schema', () => {
       [{ unitPrice: '1.23456' }, 'unitPrice'],
       [{ unitWeightKg: '0' }, 'unitWeightKg'],
       [{ unitWeightKg: '100001' }, 'unitWeightKg'],
-      [{ currency: 'JPY' }, 'currency'],
+      [{ currency: 'KRW' }, 'currency'],
       [{ incoterm: 'XYZ' }, 'incoterm'],
       [{ productLabel: '<b>bold</b>' }, 'productLabel'],
       [{ website: 'http://spam.example' }, 'website'],

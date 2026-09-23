@@ -336,3 +336,86 @@ keys before any public traffic. The workspace goes further: in production it ref
 sessions without `REDIS_URL` (503), because per-instance sessions would sign users out at random.
 It also needs `DATABASE_URL`, `APP_URL` and `EMAIL_TRANSPORT=resend` with `RESEND_API_KEY` and
 `EMAIL_FROM`.
+
+## Catalogue (M3)
+
+Products and suppliers under `/app/products` and `/app/suppliers` (docs/phase-1-workspace-ux.md
+"Products (catalogue)", ADR-0012). Both pages are a list layout with the add/edit **drawer** as a
+child route (`app.products.new.tsx`, `app.products.$productId.tsx`, `app.suppliers.new.tsx`,
+`app.suppliers.$supplierId.tsx`) rendered beside the table on wide screens and above it on narrow
+ones. Every form is a plain `<Form method="post">` with `<CsrfInput/>` and an `intent` button, so
+the whole catalogue works with JavaScript off. Any member may view; every mutation needs the
+`catalogue.edit` RBAC action (OWNER/ADMIN/MEMBER; VIEWER gets the 403 page).
+
+```
+routes/app.products.tsx            list (SKU, name, supplier, origin, HS code + verified mark, value, CBM, kg), search, archived filter
+routes/app.products.new.tsx        add product; routes/app.products.$productId.tsx  edit / archive / restore
+routes/app.suppliers.tsx           list; routes/app.suppliers.new.tsx  add; routes/app.suppliers.$supplierId.tsx  edit + pickup locations + payment terms
+routes/app.api.hs-lookup.tsx       POST, JSON: the HS code field's live lookup (CSRF, 10/min per user)
+components/catalogue/              drawer, field helpers, product form, supplier forms, HS code field + its client module
+services/catalogue/
+  hs-lookup.server.ts              lookupHsCode(): 10 digits → commodity summary; 6/8 → candidates; never guesses
+  product-form.server.ts           shared product-form logic: verifyForSave(), "Check code", rate-limited lookup
+  products.server.ts               list/get/create/update/archive/restore with audit rows
+  suppliers.server.ts              supplier, pickup locations (one default), payment terms (one per supplier)
+  snapshot.server.ts               productToQuoteLineSnapshot(product, qty) → engine LineInput (used by M4)
+validators/product.ts, supplier.ts zod schemas; cbmFromCarton() (Decimal, 4 dp half-up)
+data/countries-all.ts              every ISO 3166-1 alpha-2 code (the calculator keeps its short list)
+```
+
+### HS code field (§5.2, ADR-0006)
+
+- Spaces and dots are stripped; 6, 8 or 10 digits are accepted; 9 or 11 are rejected with a message.
+- **10 digits** → `lookupCommodity` through the app's cached tariff client (24 h): the official
+  description, third-country duty, VAT rate and a `preferenceEligible` hint (a 142 measure exists
+  for some origin — informational; the engine decides per origin at quote time).
+- **6 or 8 digits** → `headingCandidates` + `normaliseHsCode`: the declarable 10-digit children with
+  descriptions and duties, shown as radios (`hsCodeChoice`) for the user to pick. A single child is
+  still a candidate. The product is never saved with a 6/8-digit code.
+- Progressive enhancement: without JavaScript the "Check code" submit (`intent=check-hs`) runs the
+  same lookup in the action and re-renders the result. With JavaScript,
+  `components/catalogue/hs-lookup-client.ts` (bundled and loaded through `<Scripts nonce>`; no
+  inline scripts, no inline handlers, no `innerHTML`) debounces typing (400 ms) and POSTs to
+  `/app/api/hs-lookup` with the form's CSRF token.
+- Rate limit: 10 lookups per minute per **user** (`TARIFF_LOOKUP_LIMIT`, keyed by user id through
+  the shared limiter); the endpoint answers 429 with `Retry-After`, the form says so.
+- **On save** `hsCodeVerifiedAt`, `hsDescription` and `preferenceEligible` are set only when the
+  lookup succeeded for the exact 10-digit code being saved (`verifyForSave`). An unchanged, already
+  verified code is kept without a new lookup. If the tariff service is down, the code is not found,
+  or the user is over the limit, the product saves **unverified** and the list banner says why
+  (`?notice=saved-unverified&reason=…`). Unverified codes show an amber mark: quotes using them are
+  `INDICATIVE` until verified.
+
+### Products
+
+Three sections mapped to the Prisma `Product` model: Identity (SKU unique per organisation —
+the DB unique violation comes back as a field error — name, supplier), Sourcing (origin from the
+full ISO list, unit value ≤ 4 dp, currency incl. JPY), Logistics and compliance (kg per unit,
+CBM per unit **or** carton L×W×H cm + units per carton → CBM computed with Decimal, 4 dp half-up,
+e.g. 40×30×25 cm ÷ 12 = 0.0025; the carton dimensions are stored so the volume can be recomputed).
+Products are **archived, never deleted**: quote lines snapshot them but keep the reference. Audit:
+`product.create` / `product.update` (changed field names) / `product.archive` / `product.restore`.
+
+### Suppliers (ADR-0012)
+
+Legal identity (`legalName`, `tradingName`, `registrationNumber`, `countryOfIncorporation`),
+sourcing defaults (`defaultCurrency`, `defaultIncoterm`), pickup locations (address, country,
+closest port from the rate-sheet allow-list **or** a typed 5-character UN/LOCODE; the first one is
+the default, "Make default" moves it, the DB allows one per supplier) and payment terms (one row per
+supplier: `PREPAID`, `NET` + days, `DEPOSIT_BALANCE` + deposit % + balance trigger). `Supplier.name`
+is the display name (trading name, else legal name). `countryCode` is written alongside
+`countryOfIncorporation` as a deprecated alias until M4 (decisions-needed (w)). `PayoutMethod`
+exists in the schema only — nothing writes partner references until a payments partner is signed.
+Audit: `supplier.create/update/archive/restore`, `pickup_location.create/update/delete`,
+`payment_terms.update`. Metadata carries ids, enum values and field names only — never names,
+SKUs, addresses or registration numbers (and the log snapshot test checks the logs).
+
+### Tests
+
+`validators/product.test.ts`, `validators/supplier.test.ts`, `services/catalogue/*.test.ts` run
+without a database. `routes/catalogue.db.test.ts` (with `DATABASE_URL`, superuser or `harbour_app`
+member) drives the routes end to end with the recorded tariff fixtures
+(`test-support/tariff-fixtures.ts`): endpoint results and the 429 on the 11th call, product CRUD,
+SKU uniqueness, archive, unverified save when the fetch fails, VIEWER denied, pickup default
+uniqueness and the payment-terms CHECKs, cross-tenant negatives through the routes, the services
+and raw SQL under RLS, and the no-PII log rule.

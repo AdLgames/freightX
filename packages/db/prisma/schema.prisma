@@ -62,6 +62,10 @@ model Organization {
   documents      Document[] // (NEW vs brief) inverse of Document.organizationId
   auditLogs      AuditLog[]
   customsProfile CustomsProfile? // (NEW vs brief) 1:1 customs/payment routing settings (§6.1 Phase 2 preconditions)
+  // M3 (ADR-0012): inverses of the denormalised organizationId on the supplier sub-entities
+  pickupLocations PickupLocation[]
+  paymentTerms    PaymentTerms[]
+  payoutMethods   PayoutMethod[]
 
   @@map("organizations")
 }
@@ -231,18 +235,145 @@ model StripeEvent {
 model Supplier {
   id              String    @id @default(uuid()) @db.Uuid
   organizationId  String    @map("organization_id") @db.Uuid
-  name            String
-  countryCode     String    @map("country_code") // ISO 3166-1 alpha-2 — drives preferential origin
+  name            String // M3: display name, maintained by the app as tradingName ?? legalName
+  countryCode     String    @map("country_code") // DEPRECATED (M3, ADR-0012): alias of countryOfIncorporation, written alongside it; remove after M4 (decisions-needed (w))
   defaultIncoterm Incoterm? @map("default_incoterm")
   createdAt       DateTime  @default(now()) @map("created_at") // (NEW vs brief) timestamps for every mutable row
   updatedAt       DateTime  @updatedAt @map("updated_at") // (NEW vs brief)
 
+  // M3 (ADR-0012) legal entity: what a payments partner screens for KYB/AML. Migration 0007
+  // backfills legalName from name and countryOfIncorporation from countryCode.
+  legalName              String    @map("legal_name") // as registered
+  tradingName            String?   @map("trading_name")
+  registrationNumber     String?   @map("registration_number") // e.g. Unified Social Credit Code; not PII, not secret
+  countryOfIncorporation String    @map("country_of_incorporation") // ISO 3166-1 alpha-2
+  defaultCurrency        String?   @map("default_currency") // ISO 4217; pre-fills product currency
+  archivedAt             DateTime? @map("archived_at") // M3: archive instead of delete (products/quotes may reference)
+
   organization Organization @relation(fields: [organizationId], references: [id])
   products     Product[]
+  // M3 (ADR-0012) physical entities, payment terms and partner payout references
+  pickupLocations PickupLocation[]
+  paymentTerms    PaymentTerms?
+  payoutMethods   PayoutMethod[]
 
   @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from products (keeps denormalised org ids consistent)
   @@index([organizationId])
   @@map("suppliers")
+}
+
+// ---------- M3 (ADR-0012): supplier sub-entities ----------
+// Each carries a denormalised organizationId and a composite FK (supplier_id, organization_id) →
+// suppliers(id, organization_id), so a row can never point at another tenant's supplier. RLS,
+// CHECKs, the one-default-per-supplier partial index and grants are hand-written in 0007.
+
+// Where goods are collected: drives the origin port (and later origin trucking) of a quote. Never
+// the goods' origin for duty — that stays on Product.originCountry.
+model PickupLocation {
+  id              String   @id @default(uuid()) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  supplierId      String   @map("supplier_id") @db.Uuid
+  name            String // e.g. "Shenzhen factory"
+  addressLine1    String?  @map("address_line1")
+  addressLine2    String?  @map("address_line2")
+  city            String?
+  region          String?
+  postcode        String?
+  country         String // ISO 3166-1 alpha-2
+  closestPortCode String   @map("closest_port_code") // UN/LOCODE; CHECK ^[A-Z]{2}[A-Z0-9]{3}$ in 0007
+  isDefault       Boolean  @default(false) @map("is_default") // at most one per supplier (partial unique index, 0007)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  supplier     Supplier     @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([supplierId])
+  @@map("pickup_locations")
+}
+
+// Additive only (§4 migration rules).
+enum PaymentTermType {
+  PREPAID
+  NET
+  DEPOSIT_BALANCE
+
+  @@map("payment_term_type")
+}
+
+// Additive only.
+enum BalanceTrigger {
+  ON_SHIPMENT
+  AGAINST_BILL_OF_LADING
+  ON_ARRIVAL
+
+  @@map("balance_trigger")
+}
+
+// One per supplier (overridable per quote later). depositPct is a percentage ("30.00" = 30%),
+// matching the engine's percent convention. CHECKs in 0007: 0 ≤ depositPct ≤ 100, netDays ≥ 0,
+// DEPOSIT_BALANCE needs depositPct + balanceTrigger, NET needs netDays.
+model PaymentTerms {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  supplierId     String          @map("supplier_id") @db.Uuid
+  termType       PaymentTermType @map("term_type")
+  depositPct     Decimal?        @map("deposit_pct") @db.Decimal(5, 2)
+  balanceTrigger BalanceTrigger? @map("balance_trigger")
+  netDays        Int?            @map("net_days")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  supplier     Supplier     @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([supplierId])
+  @@unique([supplierId, organizationId]) // Prisma requires the 1:1 relation's scalar fields to be unique together (supplierId alone already is)
+  @@index([organizationId])
+  @@map("payment_terms")
+}
+
+// Additive only.
+enum PayoutPartner {
+  AIRWALLEX
+
+  @@map("payout_partner")
+}
+
+// Additive only.
+enum PayoutMethodType {
+  LOCAL
+  SWIFT
+
+  @@map("payout_method_type")
+}
+
+// Partner reference ONLY (§7.3, ADR-0012): the account number, routing code and account name go
+// straight to the partner and are never stored or logged here. accountLast4 is a masked display
+// value (CHECK: at most 4 characters, 0007). Schema only in M3 — no UI, no code writes it yet.
+model PayoutMethod {
+  id                   String           @id @default(uuid()) @db.Uuid
+  organizationId       String           @map("organization_id") @db.Uuid
+  supplierId           String           @map("supplier_id") @db.Uuid
+  partner              PayoutPartner
+  partnerBeneficiaryId String           @map("partner_beneficiary_id") // the partner's id for the beneficiary
+  type                 PayoutMethodType
+  currency             String // ISO 4217
+  bankCountry          String           @map("bank_country") // ISO 3166-1 alpha-2
+  bankName             String?          @map("bank_name")
+  accountLast4         String?          @map("account_last4")
+  verifiedAt           DateTime?        @map("verified_at")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  supplier     Supplier     @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([partner, partnerBeneficiaryId])
+  @@index([organizationId])
+  @@index([supplierId])
+  @@map("payout_methods")
 }
 
 model Product {
@@ -261,6 +392,14 @@ model Product {
   unitsPerCarton   Int?      @map("units_per_carton")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
+  // M3 (catalogue): carton dimensions kept so volumeCbm can be recomputed; the official tariff
+  // description captured at verification time; a preference hint from the lookup; archive flag.
+  cartonLengthCm     Decimal?  @map("carton_length_cm") @db.Decimal(8, 2)
+  cartonWidthCm      Decimal?  @map("carton_width_cm") @db.Decimal(8, 2)
+  cartonHeightCm     Decimal?  @map("carton_height_cm") @db.Decimal(8, 2)
+  hsDescription      String?   @map("hs_description") // official tariff description when hsCodeVerifiedAt was set
+  preferenceEligible Boolean   @default(false) @map("preference_eligible") // informational: any 142 measure existed at lookup; the engine decides per origin
+  archivedAt         DateTime? @map("archived_at") // archive instead of delete: quote lines reference products
 
   organization Organization @relation(fields: [organizationId], references: [id])
   // (NEW vs brief) composite FK (supplier_id, organization_id) → suppliers(id, organization_id):

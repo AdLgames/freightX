@@ -74,6 +74,11 @@ export {
   // M6
   SubscriptionStatus,
   // end M6
+  // M3 (ADR-0012)
+  PaymentTermType,
+  BalanceTrigger,
+  PayoutPartner,
+  PayoutMethodType,
 } from '../generated/client/index.js';
 export type {
   PrismaClient,
@@ -98,4 +103,8 @@ export type {
   // M6
   StripeEvent,
   // end M6
+  // M3 (ADR-0012)
+  PickupLocation,
+  PaymentTerms,
+  PayoutMethod,
 } from '../generated/client/index.js';
