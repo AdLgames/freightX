@@ -11,3 +11,4 @@ export * from './freight/rate-sheet.js';
 export * from './freight/resilient.js';
 export * from './freight/searates.js';
 export * from './schedules/index.js';
+export * from './storage/index.js'; // M5: object storage, document formats, malware scan

@@ -35,14 +35,16 @@ export interface HealthReport {
   queues: Array<{ name: QueueName; lastRun: LastRun | null }>;
 }
 
-const parseArgs = (argv: readonly string[]): { once?: string } => {
+const parseArgs = (argv: readonly string[]): { once?: string; onceData?: string } => {
   const i = argv.indexOf('--once');
   if (i < 0) return {};
   const value = argv[i + 1];
-  return { once: value ?? '' };
+  // M5: an optional JSON payload after the queue name (on-demand jobs such as document-scan)
+  const onceData = argv[i + 2];
+  return { once: value ?? '', ...(onceData !== undefined ? { onceData } : {}) };
 };
 
-const runOnce = async (queueName: string): Promise<number> => {
+const runOnce = async (queueName: string, onceData?: string): Promise<number> => {
   if (!isQueueName(queueName)) {
     process.stderr.write(
       `Unknown queue "${queueName}". Expected one of: ${QUEUE_NAMES.join(', ')}\n`,
@@ -53,7 +55,9 @@ const runOnce = async (queueName: string): Promise<number> => {
   const wiring = buildWiring(env);
   log('job.started', { queue: queueName, mode: 'once' });
   try {
-    const summary = await wiring.runJob(queueName);
+    // M5: on-demand jobs take their payload from the command line
+    const data: unknown = onceData === undefined ? undefined : JSON.parse(onceData);
+    const summary = await wiring.runJob(queueName, data);
     log('job.completed', { queue: queueName, mode: 'once', summary });
     return 0;
   } catch (err) {
@@ -86,7 +90,9 @@ const startWorker = async (): Promise<void> => {
   if (!env.REDIS_URL) {
     process.stderr.write(
       'REDIS_URL is not set. The worker needs Redis for BullMQ (e.g. redis://localhost:6379).\n' +
-        'To run a single job without Redis use: node dist/main.js --once <fx-refresh|tariff-refresh|quote-expiry>\n',
+        'To run a single job without Redis use: node dist/main.js --once <fx-refresh|tariff-refresh|quote-expiry>\n' +
+        // M5
+        '  (document-scan takes the payload as JSON: --once document-scan \'{"documentId":"…","organizationId":"…"}\')\n',
     );
     process.exit(1);
   }
@@ -118,7 +124,7 @@ const startWorker = async (): Promise<void> => {
           jobName: job.name,
           attempt: job.attemptsMade + 1,
         });
-        return wiring.runJob(name);
+        return wiring.runJob(name, job.data); // M5: on-demand queues (document-scan) need the job data
       },
       { connection, concurrency: 1 },
     );
@@ -195,7 +201,7 @@ const startWorker = async (): Promise<void> => {
 const main = async (): Promise<void> => {
   const args = parseArgs(process.argv.slice(2));
   if (args.once !== undefined) {
-    process.exitCode = await runOnce(args.once);
+    process.exitCode = await runOnce(args.once, args.onceData); // M5: optional payload
     return;
   }
   await startWorker();

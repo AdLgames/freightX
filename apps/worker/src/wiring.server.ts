@@ -21,10 +21,23 @@ import {
   type FetchLike,
   type TariffCacheStore,
 } from '@harbour/adapters';
+// M5: document-scan job — storage, scanner and the Prisma-backed scan store
+import {
+  createMalwareScanner,
+  createObjectStorage,
+  resolveStorageConfig,
+  storageEnvSchema,
+} from '@harbour/adapters';
+import { createPrismaClient, PrismaDocumentScanStore } from '@harbour/db';
 import { z } from 'zod';
 import { ConsoleAlertSink, WebhookAlertSink } from './alerts.js';
 import { runFxRefresh, type FxRefreshSummary } from './jobs/fx-refresh.js';
 import { runQuoteExpiry, type QuoteExpirySummary } from './jobs/quote-expiry.js';
+import {
+  runDocumentScanJob,
+  type DocumentScanPort,
+  type DocumentScanSummary,
+} from './jobs/document-scan.js'; // M5
 import {
   refreshingCacheView,
   runTariffRefresh,
@@ -54,6 +67,11 @@ export const envSchema = z.object({
   WORKER_PORT: z.coerce.number().int().min(0).max(65535).default(9090),
   TARIFF_REFRESH_CODES: csvList,
   UK_TRADE_TARIFF_BASE_URL: z.url().optional(),
+  // M5: document-scan. Storage (STORAGE_*), scanner (CLAMD_*) and the database the scan store
+  // writes to. All optional: without them the document-scan queue fails loudly per job.
+  NODE_ENV: z.enum(['development', 'test', 'production']).optional(),
+  DATABASE_URL: z.string().min(1).optional(),
+  ...storageEnvSchema.shape,
 });
 export type WorkerEnv = z.infer<typeof envSchema>;
 
@@ -69,14 +87,42 @@ export const readEnv = (source: NodeJS.ProcessEnv = process.env): WorkerEnv => {
 export interface Wiring {
   ports: WorkerPorts;
   tariffCache: TariffCacheStore;
-  runJob: (queue: QueueName) => Promise<JobSummary>;
+  /** `data` is the BullMQ job payload; only on-demand queues (M5 document-scan) read it. */
+  runJob: (queue: QueueName, data?: unknown) => Promise<JobSummary>;
 }
 
-export type JobSummary = FxRefreshSummary | TariffRefreshSummary | QuoteExpirySummary;
+export type JobSummary =
+  FxRefreshSummary | TariffRefreshSummary | QuoteExpirySummary | DocumentScanSummary; // M5
+
+// M5: builds the document-scan port from the environment, or explains what is missing.
+export type DocumentScanWiring = { port: DocumentScanPort } | { missing: string[] };
+
+export const buildDocumentScanWiring = (env: WorkerEnv): DocumentScanWiring => {
+  const missing: string[] = [];
+  const storageConfig = resolveStorageConfig(env, { production: env.NODE_ENV === 'production' });
+  if (storageConfig.kind === 'unconfigured') missing.push(`storage (${storageConfig.reason})`);
+  if (!env.DATABASE_URL) missing.push('DATABASE_URL');
+  if (missing.length > 0 || storageConfig.kind === 'unconfigured' || !env.DATABASE_URL) {
+    return { missing };
+  }
+  const storage = createObjectStorage(storageConfig, {
+    // The worker never presigns; these only satisfy the local backend's constructor.
+    localBaseUrl: 'http://localhost',
+    localFallbackSecret: env.STORAGE_LOCAL_SECRET ?? 'worker-never-signs-local-urls',
+  });
+  const prisma = createPrismaClient({ databaseUrl: env.DATABASE_URL, log: ['warn', 'error'] });
+  return {
+    port: {
+      storage,
+      scanner: createMalwareScanner(env),
+      store: new PrismaDocumentScanStore(prisma),
+    },
+  };
+};
 
 export const buildWiring = (
   env: WorkerEnv,
-  opts: { fetch?: FetchLike; now?: () => Date } = {},
+  opts: { fetch?: FetchLike; now?: () => Date; documentScan?: DocumentScanPort } = {},
 ): Wiring => {
   const now = opts.now ?? (() => new Date());
   const fetchImpl: FetchLike = opts.fetch ?? globalThis.fetch;
@@ -101,7 +147,21 @@ export const buildWiring = (
     ...(env.UK_TRADE_TARIFF_BASE_URL ? { baseUrl: env.UK_TRADE_TARIFF_BASE_URL } : {}),
   });
 
-  const runJob = async (queue: QueueName): Promise<JobSummary> => {
+  // M5: built lazily so a worker without storage/database still runs the other queues.
+  let documentScan: DocumentScanWiring | undefined = opts.documentScan
+    ? { port: opts.documentScan }
+    : undefined;
+  const documentScanPort = (): DocumentScanPort => {
+    documentScan ??= buildDocumentScanWiring(env);
+    if ('missing' in documentScan) {
+      throw new Error(
+        `document-scan is not configured: missing ${documentScan.missing.join(', ')}`,
+      );
+    }
+    return documentScan.port;
+  };
+
+  const runJob = async (queue: QueueName, data?: unknown): Promise<JobSummary> => {
     switch (queue) {
       case 'fx-refresh':
         return runFxRefresh({ fetch: fetchImpl, store: fxStore, now, alerts });
@@ -109,6 +169,8 @@ export const buildWiring = (
         return runTariffRefresh({ client: tariffClient, codes: hsCodes, now, alerts });
       case 'quote-expiry':
         return runQuoteExpiry({ port: quoteExpiry, now });
+      case 'document-scan': // M5
+        return runDocumentScanJob({ port: documentScanPort(), alerts, now }, data);
     }
   };
 

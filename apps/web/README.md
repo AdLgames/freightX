@@ -231,12 +231,66 @@ Passkeys and TOTP (§7.1), invalidating sessions on email change (no email chang
 settings wizard (M2), recent drafts / quick duty check on Home (M4). Magic-link rows are not yet
 cleaned up (TODO for the worker, see packages/db README).
 
+## Documents (M5)
+
+Brief §7.4. Routes `app/routes/app.documents*.tsx` and `files.*.tsx`, services
+`app/services/documents/`, validators `app/validators/documents.ts`, storage/scan adapters in
+`packages/adapters/src/storage/`, scan job in `apps/worker/src/jobs/document-scan.ts`, migration
+`0005_documents_quote_link`.
+
+### Environment
+
+| Variable                                                               | Effect when set                                                                                                | When unset                                                                                                                                                                        |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY` | `S3ObjectStorage` (AWS S3, or Cloudflare R2 with `STORAGE_ENDPOINT`; `STORAGE_REGION` defaults to `auto` then) | outside production: `LocalDiskObjectStorage` under `STORAGE_LOCAL_DIR` (default `.data/storage`); **production: "Document storage not configured" (503) for /app/documents only** |
+| `STORAGE_ENDPOINT` / `STORAGE_FORCE_PATH_STYLE`                        | R2/MinIO endpoint; path-style is the default with an endpoint                                                  | AWS virtual-hosted URLs                                                                                                                                                           |
+| `STORAGE_LOCAL_DIR` / `STORAGE_LOCAL_SECRET`                           | local backend directory and HMAC secret for `/files/*` URLs                                                    | `.data/storage`; secret derived from `SESSION_SECRET` or a fixed development value                                                                                                |
+| `CLAMD_HOST` / `CLAMD_PORT`                                            | `ClamdScanner` (INSTREAM over TCP, 60 s budget)                                                                | `NoScanner`: type + size check only, documents stay **Uploaded**, never **Clean**                                                                                                 |
+| `REDIS_URL`                                                            | scan jobs go to the `document-scan` BullMQ queue for `apps/worker`                                             | the scan runs in-process after the response, with a `document_scan.inline` log line                                                                                               |
+
+A partial S3 configuration (e.g. only the bucket) disables the vault too — fail closed, one
+`documents.storage_unavailable` error at startup. With S3 the presigned upload origin is added to
+the CSP as `connect-src 'self' <origin>` (`entry.server.tsx`, derived from the same env); the local
+backend is same-origin and needs nothing.
+
+### Upload flow
+
+1. `GET /app/documents/new` (`doc.upload`): type, target (the organisation, or one of its
+   quotes — M4 links here with `?quoteId=`), file.
+2. With JavaScript (`public/documents-upload.js`, served from our origin so it needs no nonce):
+   `POST /app/documents/presign` (CSRF, metadata only) validates extension + declared MIME
+   (PDF/PNG/JPG/XLSX/CSV, ≤ 25 MB), creates the `Document` row in `UPLOADED` with a sanitised
+   name and key `orgId/{quote|org}/docId`, and returns a 5-minute presigned PUT whose
+   Content-Type is part of the signature. The browser PUTs the bytes straight to storage, then
+   `POST /app/documents/:id/complete` (CSRF): `head()` must find the object at the declared size
+   → `SCANNING`, audit `doc.upload`, scan job. Without JavaScript the same form posts the file to
+   the app, which spools it and puts it into storage server-side with the same limits — the no-JS
+   and development path only.
+3. Scan (`@harbour/adapters` `runDocumentScan`, run by the worker or inline): sha256, magic
+   bytes (`%PDF-`, PNG, JPEG, ZIP + `[Content_Types].xml` for XLSX, NUL-free valid UTF-8 for CSV)
+   must match the declared type, then the malware scanner.
+   - mismatch, size disagreement or scanner `FOUND` → **Rejected** with `rejectedReason`; the
+     object is deleted before the row is updated;
+   - scanner ran clean → **Clean** (`scanEngine = clamav`);
+   - no scanner → stays **Uploaded** with `scanEngine = none`, `scanResult = not_scanned`. The UI
+     says "Type and size checked. Not virus-scanned." This is deliberately not Clean: booking
+     (§6.1) needs Clean or Verified, so unscanned documents block it.
+4. **Verified** = an OWNER/ADMIN confirmed a Clean document (`doc.verify`). Uploading the same type
+   for the same target again creates version n+1 and keeps the history.
+
+Download: `GET /app/documents/:id/download` (`doc.download`, audit `doc.download`) → 302 to a
+5-minute presigned GET with `Content-Disposition: attachment; filename="<sanitised>"`. Delete
+(`doc.upload`): soft (`deletedAt`), object removed, audit `doc.delete`. The vault lists missing
+files per accepted quote (commercial invoice, packing list), documents by quote, and organisation
+documents (EORI confirmation, VAT certificate, representation authority). Original file names are
+kept for display only and never logged (`originalName` is a redacted log key).
+
 ## Phase 1 TODO (not built — brief §2, §7)
 
 - Auth: passkeys (WebAuthn), optional TOTP.
 - Products, suppliers, HS code verification stored as `hsCodeVerifiedAt`.
 - Saved quotes: persist `QuoteResult` snapshots, `ACCEPTED` immutability, hourly expiry job.
-- Document vault: presigned uploads, AV scan, magic-byte checks.
+- Document vault: built in M5 (see "Documents (M5)"); ClamAV container and R2 vs S3 are open decisions.
 - Stripe Billing subscription and plan gating.
 - Worker (`apps/worker`): HMRC/ECB FX jobs, tariff cache refresh, quote expiry.
 - SeaRates behind `ResilientFreightProvider` with the rate sheet as fallback and outlier checks.

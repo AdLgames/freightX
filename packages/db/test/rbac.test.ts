@@ -24,6 +24,8 @@ const BRIEF: Record<Action, readonly Role[]> = {
   'shipment.book': ['OWNER', 'ADMIN'],
   'billing.manage': ['OWNER'],
   'member.manage': ['OWNER', 'ADMIN'],
+  // M5
+  'doc.verify': ['OWNER', 'ADMIN'],
 };
 
 describe('rbac matrix', () => {

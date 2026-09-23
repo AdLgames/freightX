@@ -320,6 +320,7 @@ model Quote {
   organization Organization @relation(fields: [organizationId], references: [id])
   lines        QuoteLine[]
   shipment     Shipment?
+  documents    Document[] // (NEW vs brief, M5) inverse of Document.quoteId — documents attached before a shipment exists
 
   @@unique([id, organizationId]) // (NEW vs brief) target of composite FKs from quote_lines and shipments
   @@index([organizationId, status])
@@ -463,6 +464,10 @@ enum DocumentType {
   CERTIFICATE_OF_ORIGIN
   INSURANCE_CERT
   OTHER
+  // (NEW vs brief, M5) organisation-level records (docs/phase-1-workspace-ux.md "Organisation documents"). Additive only.
+  EORI_CONFIRMATION
+  VAT_CERTIFICATE
+  REPRESENTATION_AUTHORITY
 
   @@map("document_type")
 }
@@ -477,31 +482,55 @@ enum DocumentStatus {
   @@map("document_status")
 }
 
+// (NEW vs brief, M5) What a document is attached to. Phase 1 has no shipments yet, so uploads hang
+// off an accepted quote (QUOTE) or the organisation itself (ORGANISATION: EORI confirmation, VAT
+// certificate, representation authority); SHIPMENT is Phase 2. Migration 0005 adds a CHECK so the
+// scope agrees with which of quote_id / shipment_id is set. Additive only.
+enum DocumentScope {
+  SHIPMENT
+  QUOTE
+  ORGANISATION
+
+  @@map("document_scope")
+}
+
 model Document {
   id             String         @id @default(uuid()) @db.Uuid
   organizationId String         @map("organization_id") @db.Uuid
   shipmentId     String?        @map("shipment_id") @db.Uuid
+  quoteId        String?        @map("quote_id") @db.Uuid // (NEW vs brief, M5) documents are collected per accepted quote before a shipment exists
+  scope          DocumentScope // (NEW vs brief, M5)
   type           DocumentType
   status         DocumentStatus @default(UPLOADED)
-  storageKey     String         @map("storage_key") // never a public URL; `orgId/shipmentId/docId` (§7.4)
-  originalName   String         @map("original_name")
+  storageKey     String         @map("storage_key") // never a public URL; `orgId/{quote|org}/docId` in Phase 1, `orgId/shipmentId/docId` (§7.4) once shipments exist
+  originalName   String         @map("original_name") // sanitised at upload; for display and Content-Disposition only, never a storage path, never logged (§7.3)
   mimeType       String         @map("mime_type")
-  sizeBytes      Int            @map("size_bytes")
-  sha256         String
-  version        Int            @default(1)
+  sizeBytes      Int            @map("size_bytes") // ≤ 25 MB (§7.4); Int is ample
+  sha256         String // '' until the scan pipeline has read the object
+  version        Int            @default(1) // same type + target again → version + 1; older rows are kept
   uploadedById   String         @map("uploaded_by_id") @db.Uuid
   verifiedById   String?        @map("verified_by_id") @db.Uuid
   verifiedAt     DateTime?      @map("verified_at")
+  // (NEW vs brief, M5) scan pipeline outcome (§7.4). scanEngine 'clamav' | 'none'; scanResult
+  // 'clean' | 'not_scanned' | a rejected reason. status stays UPLOADED when no scanner ran.
+  scanEngine     String?        @map("scan_engine")
+  scanResult     String?        @map("scan_result")
+  scannedAt      DateTime?      @map("scanned_at")
+  rejectedReason String?        @map("rejected_reason") // (NEW vs brief, M5) set with status REJECTED; the object is deleted from storage
+  deletedAt      DateTime?      @map("deleted_at") // (NEW vs brief, M5) soft delete; the object is removed from storage at the same time
   createdAt      DateTime       @default(now()) @map("created_at")
 
   organization Organization @relation(fields: [organizationId], references: [id]) // (NEW vs brief)
   // (NEW vs brief) composite FK: a document can only be attached to its own tenant's shipment.
   shipment     Shipment?    @relation(fields: [shipmentId, organizationId], references: [id, organizationId])
+  // (NEW vs brief, M5) composite FK: a document can only be attached to its own tenant's quote. Restrict: delete the documents first.
+  quote        Quote?       @relation(fields: [quoteId, organizationId], references: [id, organizationId], onDelete: Restrict)
   uploadedBy   User         @relation("uploadedDocuments", fields: [uploadedById], references: [id]) // (NEW vs brief) who uploaded (audit / UI)
   verifiedBy   User?        @relation("verifiedDocuments", fields: [verifiedById], references: [id]) // (NEW vs brief) who verified
 
   @@index([organizationId])
   @@index([shipmentId]) // (NEW vs brief) booking preconditions look up docs by shipment (§6.1)
+  @@index([organizationId, quoteId]) // (NEW vs brief, M5) vault "by quote" and missing-files list
   @@map("documents")
 }
 

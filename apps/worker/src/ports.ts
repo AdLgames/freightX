@@ -81,7 +81,9 @@ export type AlertCode =
   | 'FX_ECB_FETCH_FAILED'
   | 'FX_ECB_PARSE_FAILED'
   | 'TARIFF_REFRESH_DEGRADED'
-  | 'JOB_FAILED';
+  | 'JOB_FAILED'
+  // M5: document-scan job — a scanner rejected an upload (warning; the object is already deleted)
+  | 'DOCUMENT_MALWARE_FOUND';
 
 export interface AlertSink {
   alert(

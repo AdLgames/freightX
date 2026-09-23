@@ -16,6 +16,8 @@ export const ACTIONS = [
   'shipment.book',
   'billing.manage',
   'member.manage',
+  // M5: document vault
+  'doc.verify', // mark a scanned document as checked by a person (OWNER/ADMIN)
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -33,6 +35,8 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   'shipment.book': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'billing.manage': { OWNER: true, ADMIN: false, MEMBER: false, VIEWER: false },
   'member.manage': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  // M5: document vault (verification is an admin act, like accepting a quote)
+  'doc.verify': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
 };
 
 export class ForbiddenError extends Error {

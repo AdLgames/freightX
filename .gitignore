@@ -13,3 +13,6 @@ coverage/
 *.tfstate.*
 .terraform.lock.hcl
 packages/db/generated/
+
+# M5: local document storage (development only)
+.data/

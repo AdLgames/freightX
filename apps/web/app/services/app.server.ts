@@ -16,6 +16,7 @@ import { createRedisClient } from './redis.server';
 import { createTariffClient } from './tariff.server';
 import { createTurnstile, type TurnstileVerifier } from './turnstile.server';
 import { createAuthServices, type AuthServices } from './workspace.server';
+import { createDocumentServices, type DocumentServices } from './documents/storage.server'; // M5
 
 /**
  * Composition root. Built once per process (memoised on `globalThis` so `react-router dev`
@@ -40,6 +41,8 @@ export interface AppServices {
   startedAt: Date;
   /** Sign-in, sessions and the workspace's database access (M1). See workspace.server.ts. */
   auth: AuthServices;
+  /** M5: object storage, malware scanner and scan-job enqueuer for the document vault. */
+  documents: DocumentServices;
 }
 
 export interface AppOverrides {
@@ -86,6 +89,8 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     now,
   });
   const fx = await seedFxStore({ store: stores.fxStore, csvPath: env.FX_SEED_CSV, logger, now });
+  // M5
+  const documents = createDocumentServices({ env, logger, redis, prisma: auth.prisma });
 
   logger.info('app.started', {
     nodeEnv: env.NODE_ENV,
@@ -119,6 +124,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     calcVersion: CALC_VERSION,
     startedAt,
     auth,
+    documents, // M5
   };
 };
 
