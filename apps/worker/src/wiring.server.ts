@@ -29,9 +29,20 @@ import {
   storageEnvSchema,
 } from '@harbour/adapters';
 import { createPrismaClient, PrismaDocumentScanStore } from '@harbour/db';
+// M2 — identity checks (§5.6) need the HMRC adapters, the db package (RLS-scoped store) and the
+// field-encryption key provider.
+import { HmrcEoriChecker, HmrcVatChecker } from '@harbour/adapters';
+import { createKeyProvider, type KeyProvider } from '@harbour/db';
 import { z } from 'zod';
 import { ConsoleAlertSink, WebhookAlertSink } from './alerts.js';
+import {
+  PrismaIdentityVerificationStore,
+  UnavailableIdentityVerificationStore,
+} from './identity-store.server.js'; // M2
+import { runEoriVerify } from './jobs/eori-verify.js'; // M2
 import { runFxRefresh, type FxRefreshSummary } from './jobs/fx-refresh.js';
+import { RepeatedErrorTracker, type IdentityVerifySummary } from './jobs/identity-verify.js'; // M2
+import { runVatVerify } from './jobs/vat-verify.js'; // M2
 import { runQuoteExpiry, type QuoteExpirySummary } from './jobs/quote-expiry.js';
 import {
   runDocumentScanJob,
@@ -84,6 +95,12 @@ export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).optional(),
   DATABASE_URL: z.string().min(1).optional(),
   ...storageEnvSchema.shape,
+  // M2 — identity verification jobs: the database (RLS-scoped, see identity-store.server.ts) and
+  // the SAME field-encryption master key as apps/web. Both optional so the FX/tariff/expiry jobs
+  // keep running without them; the identity jobs then fail with a clear message.
+  // (DATABASE_URL is declared above with M5.)
+  FIELD_ENCRYPTION_KEY: z.string().min(1).optional(),
+  HMRC_API_BASE_URL: z.url().optional(),
 });
 export type WorkerEnv = z.infer<typeof envSchema>;
 
@@ -103,12 +120,18 @@ export interface Wiring {
   stripeEvents: StripeEventHandlerPort;
   runStripeEvent: (data: unknown) => Promise<StripeEventSummary>;
   // end M6
-  /** `data` is the BullMQ job payload; only on-demand queues (M5 document-scan) read it. */
+  /** `data` is the BullMQ job payload; only on-demand queues (M5 document-scan, M2 identity) read it. */
   runJob: (queue: QueueName, data?: unknown) => Promise<JobSummary>;
+  /** M2: null when FIELD_ENCRYPTION_KEY is unset (identity jobs fail with a clear error). */
+  keyProvider: KeyProvider | null;
 }
 
 export type JobSummary =
-  FxRefreshSummary | TariffRefreshSummary | QuoteExpirySummary | DocumentScanSummary; // M5
+  | FxRefreshSummary
+  | TariffRefreshSummary
+  | QuoteExpirySummary
+  | DocumentScanSummary // M5
+  | IdentityVerifySummary; // M2
 
 // M5: builds the document-scan port from the environment, or explains what is missing.
 export type DocumentScanWiring = { port: DocumentScanPort } | { missing: string[] };
@@ -176,6 +199,22 @@ export const buildWiring = (
     }
     return documentScan.port;
   };
+  // M2 — identity verification (eori-verify, vat-verify). The store runs every statement inside
+  // withOrgTransaction, so the worker's DB login must be a member of harbour_app (RLS applies).
+  const identityStore = env.DATABASE_URL
+    ? new PrismaIdentityVerificationStore(createPrismaClient({ databaseUrl: env.DATABASE_URL }))
+    : new UnavailableIdentityVerificationStore();
+  const keyChoice = createKeyProvider({
+    masterKey: env.FIELD_ENCRYPTION_KEY,
+    // The worker must share apps/web's key; an ephemeral one could never decrypt anything, so
+    // treat "unset" like production (fail closed) whatever NODE_ENV says.
+    nodeEnv: 'production',
+  });
+  const keyProvider = keyChoice.provider;
+  const hmrcBase = env.HMRC_API_BASE_URL ? { baseUrl: env.HMRC_API_BASE_URL } : {};
+  const eoriChecker = new HmrcEoriChecker({ fetch: fetchImpl, now, ...hmrcBase });
+  const vatChecker = new HmrcVatChecker({ fetch: fetchImpl, now, ...hmrcBase });
+  const identityErrors = new RepeatedErrorTracker();
 
   const runJob = async (queue: QueueName, data?: unknown): Promise<JobSummary> => {
     switch (queue) {
@@ -187,6 +226,25 @@ export const buildWiring = (
         return runQuoteExpiry({ port: quoteExpiry, now });
       case 'document-scan': // M5
         return runDocumentScanJob({ port: documentScanPort(), alerts, now }, data);
+      // M2
+      case 'eori-verify':
+        return runEoriVerify(data, {
+          store: identityStore,
+          keyProvider,
+          checker: eoriChecker,
+          now,
+          alerts,
+          errors: identityErrors,
+        });
+      case 'vat-verify':
+        return runVatVerify(data, {
+          store: identityStore,
+          keyProvider,
+          checker: vatChecker,
+          now,
+          alerts,
+          errors: identityErrors,
+        });
     }
   };
 
@@ -196,5 +254,5 @@ export const buildWiring = (
     runStripeEventJob(data, { handler: stripeEvents });
   // end M6
 
-  return { ports, tariffCache, runJob, stripeEvents, runStripeEvent };
+  return { ports, tariffCache, runJob, stripeEvents, runStripeEvent, keyProvider };
 };

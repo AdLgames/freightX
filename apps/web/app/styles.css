@@ -1805,6 +1805,75 @@ fieldset.readonly .form-actions {
 [data-quote-field][hidden] {
   display: none;
 }
+/* ---------- M2: settings ---------- */
+
+.settings-nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
+.settings-nav a[aria-current='page'] {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.card-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--link);
+  padding: 1rem;
+}
+
+.card h3 {
+  margin-top: 0;
+}
+
+.status-pill.verification {
+  font-weight: 600;
+  letter-spacing: 0;
+  font-size: 0.9rem;
+}
+
+.status-pill.verification.muted {
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.status-pill.verification.pending {
+  background: var(--amber);
+}
+
+.status-pill.verification.valid {
+  background: var(--green);
+}
+
+.status-pill.verification.invalid,
+.status-pill.verification.error {
+  background: var(--muted);
+}
+
+.member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.member-actions form {
+  margin: 0;
+}
 
 .visually-hidden {
   position: absolute;
@@ -1813,4 +1882,10 @@ fieldset.readonly .form-actions {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+.pager {
+  margin-top: 1rem;
+  display: flex;
+  gap: 1rem;
 }

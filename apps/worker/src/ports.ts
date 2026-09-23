@@ -86,7 +86,8 @@ export type AlertCode =
   | 'STRIPE_EVENT_DEAD_LETTERED'
   // end M6
   // M5: document-scan job — a scanner rejected an upload (warning; the object is already deleted)
-  | 'DOCUMENT_MALWARE_FOUND';
+  | 'DOCUMENT_MALWARE_FOUND'
+  | 'IDENTITY_VERIFY_REPEATED_ERROR'; // M2: eori-verify / vat-verify hit ERROR 3× in a row for one org
 
 export interface AlertSink {
   alert(

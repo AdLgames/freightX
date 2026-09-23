@@ -67,7 +67,9 @@ export const action = async ({ request }: Route.ActionArgs) => {
     newUser: consumed.newUser,
     orgId: first?.organization.id ?? null,
   });
-  return redirect(first ? next : '/onboarding/organization', {
+  // M2: an invitee with no organisation yet continues to the invitation, not to onboarding.
+  const acceptingInvite = next.startsWith('/invite/accept');
+  return redirect(first || acceptingInvite ? next : '/onboarding/organization', {
     headers: { 'Set-Cookie': setCookie },
   });
 };

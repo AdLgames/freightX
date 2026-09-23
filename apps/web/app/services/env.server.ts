@@ -1,6 +1,6 @@
 import { storageEnvSchema } from '@harbour/adapters'; // M5
 import { z } from 'zod';
-import { decimalString } from '../validators/common';
+import { decimalString, eori, safeString } from '../validators/common'; // M2: eori, safeString
 import type { CalculatorMode } from '../validators/calculator';
 import { parseLogLevel } from './logger.server';
 
@@ -91,6 +91,15 @@ const envSchema = z
     // M5: document vault — object storage (STORAGE_*: S3/R2, or a local directory outside
     // production) and the ClamAV daemon (CLAMD_*). Schema shared with the worker via @harbour/adapters.
     ...storageEnvSchema.shape,
+    // M2 — settings (apps/web/README.md "Settings (M2)"). All optional; production without
+    // FIELD_ENCRYPTION_KEY closes the workspace (§7.3), never the calculator.
+    /** 32 random bytes, base64 — the field-encryption master key (packages/db crypto.ts). Never logged. */
+    FIELD_ENCRYPTION_KEY: z.string().min(1).max(200).optional(),
+    /** Companies House Public Data API key (HTTP Basic username). Unset → company lookup off. */
+    COMPANIES_HOUSE_API_KEY: z.string().min(1).max(200).optional(),
+    /** The forwarding partner's EORI and name shown in the CDS authorisation step; unset → "to be confirmed". */
+    FORWARDER_EORI: eori.optional(),
+    FORWARDER_NAME: safeString(120).optional(),
   })
   .refine(
     (e) => (e.TRADE_TARIFF_API_KEY === undefined) === (e.TRADE_TARIFF_API_KEY_HEADER === undefined),
@@ -144,6 +153,11 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     STORAGE_LOCAL_SECRET: source.STORAGE_LOCAL_SECRET,
     CLAMD_HOST: source.CLAMD_HOST,
     CLAMD_PORT: source.CLAMD_PORT,
+    // M2
+    FIELD_ENCRYPTION_KEY: blank(source.FIELD_ENCRYPTION_KEY),
+    COMPANIES_HOUSE_API_KEY: blank(source.COMPANIES_HOUSE_API_KEY),
+    FORWARDER_EORI: blank(source.FORWARDER_EORI),
+    FORWARDER_NAME: blank(source.FORWARDER_NAME),
   });
   return {
     ...parsed,

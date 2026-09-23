@@ -43,6 +43,7 @@ export const TENANT_MODELS = [
   'PickupLocation',
   'PaymentTerms',
   'PayoutMethod',
+  'Invitation', // M2
 ] as const;
 export type TenantModel = (typeof TENANT_MODELS)[number];
 
@@ -77,6 +78,7 @@ export const TENANT_TABLES: Readonly<Record<TenantModel, string>> = {
   PickupLocation: 'pickup_locations',
   PaymentTerms: 'payment_terms',
   PayoutMethod: 'payout_methods',
+  Invitation: 'invitations', // M2
 };
 
 export const isTenantModel = (model: string): model is TenantModel =>

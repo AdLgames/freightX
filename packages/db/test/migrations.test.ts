@@ -57,6 +57,7 @@ describe('schema ↔ allow-lists', () => {
         'audit_logs',
         'customs_profiles',
         'documents',
+        'invitations', // M2
         'memberships',
         'organizations',
         'outbox_events',

@@ -97,6 +97,17 @@ export const requireWorkspace = async (): Promise<Workspace> => {
   if (auth.unavailable === 'NO_SESSION_STORE' || !auth.sessions) {
     throw sessionStoreUnavailable();
   }
+  // M2: field encryption is a prerequisite for the workspace (§7.3, ADR-0016); fail closed.
+  if (auth.unavailable === 'NO_FIELD_ENCRYPTION_KEY') {
+    throw pageError(
+      503,
+      'Workspace not configured',
+      'The workspace cannot start until its encryption key is configured. The landed-cost calculator is still available.',
+      production
+        ? null
+        : 'Set FIELD_ENCRYPTION_KEY (32 random bytes, base64); see apps/web/README.md "Settings (M2)".',
+    );
+  }
   return { app, prisma: auth.prisma, sessions: auth.sessions };
 };
 
@@ -147,9 +158,15 @@ export const startSession = async (
   init: Pick<SessionData, 'userId' | 'currentOrgId' | 'role'>,
 ): Promise<{ session: Session; setCookie: string }> => {
   const { session: previous, cookie } = await readSession(ws, request);
+  // M2: record the user's current session epoch so a later bump (member removed) signs them out.
+  const epochRow = await ws.prisma.user.findUnique({
+    where: { id: init.userId },
+    select: { sessionEpoch: true },
+  });
+  const epoch = epochRow?.sessionEpoch ?? 0;
   const session = await withSessionStore(ws, request, async () => {
     if (previous) await ws.sessions.destroy(previous.id);
-    return ws.sessions.create(init);
+    return ws.sessions.create({ ...init, epoch });
   });
   return { session, setCookie: serializeSessionCookie(cookie, session.id) };
 };
@@ -216,9 +233,19 @@ const resolveUser = async (request: Request): Promise<UserContext> => {
   // `users` is a global identity table (no RLS, PASSTHROUGH_MODELS): read with the plain client.
   const user = await ws.prisma.user.findUnique({
     where: { id: session.data.userId },
-    select: { id: true, email: true },
+    select: { id: true, email: true, sessionEpoch: true }, // M2: sessionEpoch
   });
   if (!user) {
+    await withSessionStore(ws, request, () => ws.sessions.destroy(session.id));
+    throw redirect(loginUrl(request), { headers: { 'Set-Cookie': clearSessionCookie(cookie) } });
+  }
+  // M2: the user's sessions were invalidated (e.g. removed from an organisation) after this
+  // session started → sign out everywhere (§7.1 "rotated on privilege change").
+  if (user.sessionEpoch !== session.data.epoch) {
+    requestLogger(ws.app.logger, request).info('session.invalidated', {
+      reason: 'epoch',
+      userId: user.id,
+    });
     await withSessionStore(ws, request, () => ws.sessions.destroy(session.id));
     throw redirect(loginUrl(request), { headers: { 'Set-Cookie': clearSessionCookie(cookie) } });
   }
@@ -226,7 +253,7 @@ const resolveUser = async (request: Request): Promise<UserContext> => {
   const headers = new Headers();
   if (session.touched) headers.append('Set-Cookie', serializeSessionCookie(cookie, session.id));
   return {
-    user,
+    user: { id: user.id, email: user.email },
     session,
     headers,
     [INTERNAL]: { app: ws.app, prisma: ws.prisma, sessions: ws.sessions, cookie },

@@ -43,6 +43,39 @@ export type { Role, Action } from './rbac.js';
 export { recordAudit } from './audit.js';
 export type { AuditEntry, AuditWriter } from './audit.js';
 
+// M2 — field encryption (§7.3), see crypto.ts and README "Field encryption".
+export {
+  CIPHERTEXT_VERSION,
+  CIPHERTEXT_RE,
+  DATA_KEY_BYTES,
+  MASTER_KEY_BYTES,
+  ORGANIZATION_ENCRYPTED_FIELDS,
+  FieldCryptoError,
+  EnvKeyProvider,
+  parseMasterKey,
+  generateMasterKey,
+  generateDataKey,
+  encryptField,
+  decryptField,
+  isCiphertext,
+  last4,
+  rewrapDataKey,
+  resolveOrgDataKey,
+  orgFieldCipher,
+  createKeyProvider,
+  prismaDataKeyStore,
+  InMemoryDataKeyStore,
+} from './crypto.js';
+export type {
+  KeyProvider,
+  DataKeyStore,
+  DataKeyStoreClient,
+  OrgFieldCipher,
+  KeyProviderChoice,
+  FieldCryptoErrorCode,
+  OrganizationEncryptedField,
+} from './crypto.js';
+
 export {
   PrismaTariffCacheStore,
   PrismaFxRateStore,
@@ -74,6 +107,7 @@ export {
   DocumentStatus,
   DocumentScope, // M5
   PaymentMethod,
+  VerificationStatus, // M2
   Role as PrismaRole,
   // M6
   SubscriptionStatus,
@@ -111,4 +145,5 @@ export type {
   PickupLocation,
   PaymentTerms,
   PayoutMethod,
+  Invitation, // M2
 } from '../generated/client/index.js';

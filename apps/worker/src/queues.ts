@@ -10,8 +10,17 @@ export const QUEUE_NAMES = [
   'tariff-refresh',
   'quote-expiry',
   'document-scan', // M5: on demand (one job per completed upload, enqueued by the web app); no schedule
+  // M2: on-demand identity checks enqueued by apps/web (payload { organizationId }); no cron.
+  'eori-verify',
+  'vat-verify',
 ] as const;
 export type QueueName = (typeof QUEUE_NAMES)[number];
+
+/** M2: queues with no cron schedule; jobs arrive from apps/web (`JobEnqueuer`). */
+export const ON_DEMAND_QUEUE_NAMES = [
+  'eori-verify',
+  'vat-verify',
+] as const satisfies readonly QueueName[];
 
 export const isQueueName = (s: string): s is QueueName =>
   (QUEUE_NAMES as readonly string[]).includes(s);
@@ -48,6 +57,9 @@ export const SCHEDULES: Record<QueueName, readonly RepeatableSchedule[]> = {
   'tariff-refresh': [{ id: 'tariff-refresh:nightly', pattern: '0 2 * * *' }],
   'quote-expiry': [{ id: 'quote-expiry:hourly', pattern: '0 * * * *' }],
   'document-scan': [], // M5: never repeatable; jobs carry { documentId, organizationId }
+  // M2: no schedule — jobs are added by the web app (settings) when an EORI / VAT number is saved.
+  'eori-verify': [],
+  'vat-verify': [],
 };
 
 /** The slice of `bullmq.Queue` the scheduler needs, so tests can pass a fake. */

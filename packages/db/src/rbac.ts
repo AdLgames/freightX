@@ -21,6 +21,10 @@ export const ACTIONS = [
   'catalogue.edit',
   // M5: document vault
   'doc.verify', // mark a scanned document as checked by a person (OWNER/ADMIN)
+  // M2 — settings additions (not in the brief's table): Companies House confirmation (ADR-0015)
+  // and the audit-log view are OWNER/ADMIN, like the other organisation settings.
+  'org.company.confirm',
+  'audit.view',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -41,6 +45,9 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   'catalogue.edit': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false }, // M3
   // M5: document vault (verification is an admin act, like accepting a quote)
   'doc.verify': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  // M2
+  'org.company.confirm': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  'audit.view': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
 };
 
 export class ForbiddenError extends Error {

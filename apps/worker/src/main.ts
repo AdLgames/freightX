@@ -38,16 +38,29 @@ export interface HealthReport {
   queues: Array<{ name: QueueName; lastRun: LastRun | null }>;
 }
 
-const parseArgs = (argv: readonly string[]): { once?: string; onceData?: string } => {
+/**
+ * `--once <queue> [--data '<json>' | '<json>']`: run one job inline without Redis. The payload is
+ * optional and only on-demand jobs read it (M5 document-scan; M2 eori-verify / vat-verify).
+ * Both spellings are accepted: `--data` (M2) or a positional JSON argument (M5).
+ */
+const parseArgs = (argv: readonly string[]): { once?: string; data?: unknown } => {
   const i = argv.indexOf('--once');
   if (i < 0) return {};
   const value = argv[i + 1];
-  // M5: an optional JSON payload after the queue name (on-demand jobs such as document-scan)
-  const onceData = argv[i + 2];
-  return { once: value ?? '', ...(onceData !== undefined ? { onceData } : {}) };
+  const d = argv.indexOf('--data');
+  const raw = d >= 0 ? argv[d + 1] : argv[i + 2]?.startsWith('--') ? undefined : argv[i + 2];
+  let data: unknown;
+  if (raw !== undefined) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = undefined;
+    }
+  }
+  return { once: value ?? '', ...(data === undefined ? {} : { data }) };
 };
 
-const runOnce = async (queueName: string, onceData?: string): Promise<number> => {
+const runOnce = async (queueName: string, data?: unknown): Promise<number> => {
   if (!isQueueName(queueName)) {
     process.stderr.write(
       `Unknown queue "${queueName}". Expected one of: ${QUEUE_NAMES.join(', ')}\n`,
@@ -58,9 +71,7 @@ const runOnce = async (queueName: string, onceData?: string): Promise<number> =>
   const wiring = buildWiring(env);
   log('job.started', { queue: queueName, mode: 'once' });
   try {
-    // M5: on-demand jobs take their payload from the command line
-    const data: unknown = onceData === undefined ? undefined : JSON.parse(onceData);
-    const summary = await wiring.runJob(queueName, data);
+    const summary = await wiring.runJob(queueName, data); // M5/M2: payload for on-demand jobs
     log('job.completed', { queue: queueName, mode: 'once', summary });
     return 0;
   } catch (err) {
@@ -127,7 +138,7 @@ const startWorker = async (): Promise<void> => {
           jobName: job.name,
           attempt: job.attemptsMade + 1,
         });
-        return wiring.runJob(name, job.data); // M5: on-demand queues (document-scan) need the job data
+        return wiring.runJob(name, job.data); // M5/M2: on-demand queues read the job data
       },
       { connection, concurrency: 1 },
     );
@@ -250,7 +261,7 @@ const startWorker = async (): Promise<void> => {
 const main = async (): Promise<void> => {
   const args = parseArgs(process.argv.slice(2));
   if (args.once !== undefined) {
-    process.exitCode = await runOnce(args.once, args.onceData); // M5: optional payload
+    process.exitCode = await runOnce(args.once, args.data); // M5/M2: optional payload
     return;
   }
   await startWorker();

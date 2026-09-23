@@ -1,0 +1,48 @@
+{
+  "_comment": "HAND-AUTHORED SAMPLE in the documented Companies House Public Data API shape (GET /search/companies?q=hydro+imports). Not a live recording: the build sandbox cannot reach api.company-information.service.gov.uk. Re-record before trusting the field names and the company_type codes (docs/decisions-needed.md (u)).",
+  "etag": "d41d8cd98f00b204e9800998ecf8427e",
+  "items": [
+    {
+      "address_snippet": "1 Example Street, London, EC1A 1AA",
+      "company_number": "12345678",
+      "company_status": "active",
+      "company_type": "ltd",
+      "date_of_creation": "2019-03-01",
+      "description": "12345678 - Incorporated on 1 March 2019",
+      "description_identifier": ["incorporated-on"],
+      "kind": "searchresults#company",
+      "links": { "self": "/company/12345678" },
+      "title": "HYDRO IMPORTS LTD"
+    },
+    {
+      "address_snippet": "2 Sample Road, Manchester, M1 1AA",
+      "company_number": "OC654321",
+      "company_status": "active",
+      "company_type": "llp",
+      "date_of_creation": "2015-06-15",
+      "description": "OC654321 - Incorporated on 15 June 2015",
+      "description_identifier": ["incorporated-on"],
+      "kind": "searchresults#company",
+      "links": { "self": "/company/OC654321" },
+      "title": "HYDRO IMPORTS PARTNERS LLP"
+    },
+    {
+      "address_snippet": "3 Old Lane, Leeds, LS1 1AA",
+      "company_number": "09876543",
+      "company_status": "dissolved",
+      "company_type": "ltd",
+      "date_of_cessation": "2021-01-31",
+      "date_of_creation": "2012-09-10",
+      "description": "09876543 - Dissolved on 31 January 2021",
+      "description_identifier": ["dissolved-on"],
+      "kind": "searchresults#company",
+      "links": { "self": "/company/09876543" },
+      "title": "HYDRO IMPORTS (OLD) LIMITED"
+    }
+  ],
+  "items_per_page": 5,
+  "kind": "search#companies",
+  "page_number": 1,
+  "start_index": 0,
+  "total_results": 3
+}
