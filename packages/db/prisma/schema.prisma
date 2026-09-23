@@ -8,7 +8,8 @@
 //     (`organization_id`, `updated_at`, ...). Prisma model/field names stay as in the brief.
 //   * Every tenant model carries `organizationId` and an index that starts with it. The
 //     tenant allow-list used by the Prisma extension lives in src/tenancy.ts and the RLS
-//     table list in migration 0002 — test/migrations.test.ts keeps the three in sync.
+//     table list in migrations 0002+ (0003: customs_profiles) — test/migrations.test.ts keeps the
+//     three in sync.
 //   * All internal ids are `@db.Uuid` (NEW vs brief): Prisma's default for `String @default(uuid())`
 //     is TEXT, which cannot be compared with `current_setting('app.current_org')::uuid` in the
 //     RLS policies. External ids (Stripe, forwarder, HMRC measure SIDs, audit targetId) stay TEXT.
@@ -49,6 +50,7 @@ model Organization {
   shipmentEvents ShipmentEvent[] // (NEW vs brief) inverse of the denormalised ShipmentEvent.organizationId
   documents      Document[] // (NEW vs brief) inverse of Document.organizationId
   auditLogs      AuditLog[]
+  customsProfile CustomsProfile? // (NEW vs brief) 1:1 customs/payment routing settings (§6.1 Phase 2 preconditions)
 
   @@map("organizations")
 }
@@ -63,6 +65,8 @@ model User {
   memberships       Membership[]
   uploadedDocuments Document[]   @relation("uploadedDocuments") // (NEW vs brief) inverse of Document.uploadedBy
   verifiedDocuments Document[]   @relation("verifiedDocuments") // (NEW vs brief) inverse of Document.verifiedBy
+
+  cdsAuthorityConfirmations CustomsProfile[] @relation("cdsAuthorityConfirmations") // (NEW vs brief) inverse of CustomsProfile.cdsAuthorityConfirmedBy
 
   @@map("users")
 }
@@ -99,6 +103,54 @@ enum Plan {
   @@map("plan")
 }
 
+// (NEW vs brief) How import duty/VAT is paid at the border. Additive only (§4 migration rules):
+// append new values, never rename or remove one — quotes snapshot this value.
+//   OWN_DEFERMENT     the importer's own duty deferment account (DAN); CDS requires the importer to
+//                     authorise the forwarder's EORI to use it (CustomsProfile.cdsAuthorityGranted)
+//   BROKER_DEFERMENT  the forwarder pays through its own deferment account and re-invoices, plus a
+//                     fee (engine input `brokerDeferment`) — the default for micro-importers
+//   CDS_CASH_ACCOUNT  the importer pays from a CDS cash account before release
+enum PaymentMethod {
+  OWN_DEFERMENT
+  BROKER_DEFERMENT
+  CDS_CASH_ACCOUNT
+
+  @@map("payment_method")
+}
+
+// (NEW vs brief) Per-organisation customs payment routing: postponed VAT accounting, deferment and
+// the forwarder's deferment terms. Feeds engine inputs `vatPostponed` / `brokerDeferment` and the
+// Phase 2 booking preconditions (§6.1, see README). 1:1 with Organization.
+// DB rules (migration 0003): DAN format, OWN_DEFERMENT needs a DAN, fee bounds, a granted CDS
+// authority needs a confirmation time, and `usePva` requires a VAT-registered organisation
+// (trigger customs_profiles_pva_requires_vat).
+model CustomsProfile {
+  id                        String        @id @default(uuid()) @db.Uuid
+  organizationId            String        @map("organization_id") @db.Uuid
+  usePva                    Boolean       @default(false) @map("use_pva") // postponed VAT accounting; only for VAT-registered orgs (trigger)
+  paymentMethod             PaymentMethod @default(BROKER_DEFERMENT) @map("payment_method")
+  // 7-digit Deferment Approval Number. Sensitive like the EORI: encrypted at rest per §7.3 once the
+  // field-encryption extension lands (the format CHECK in 0003 must then move to the app layer),
+  // never logged, never in audit metadata.
+  danNumber                 String?       @map("dan_number")
+  danLimit                  Decimal?      @map("dan_limit") @db.Decimal(14, 2) // monthly deferment limit (GBP), user-entered
+  cdsAuthorityGranted       Boolean       @default(false) @map("cds_authority_granted") // importer authorised the forwarder's EORI to use its DAN in CDS
+  cdsAuthorityConfirmedAt   DateTime?     @map("cds_authority_confirmed_at")
+  cdsAuthorityConfirmedById String?       @map("cds_authority_confirmed_by_id") @db.Uuid // who ticked the confirmation (audit)
+  brokerDefermentFeePct     Decimal?      @map("broker_deferment_fee_pct") @db.Decimal(5, 2) // forwarder's fee on duty+VAT it defers, "2.50" = 2.5%; null = unknown
+  brokerDefermentMinimumGbp Decimal?      @map("broker_deferment_minimum_gbp") @db.Decimal(14, 2) // forwarder's minimum fee per entry; null = unknown
+  createdAt                 DateTime      @default(now()) @map("created_at")
+  updatedAt                 DateTime      @updatedAt @map("updated_at")
+
+  organization            Organization @relation(fields: [organizationId], references: [id])
+  cdsAuthorityConfirmedBy User?        @relation("cdsAuthorityConfirmations", fields: [cdsAuthorityConfirmedById], references: [id])
+
+  // organizationId is unique (1:1). Declared model-level so it also serves as the "index starting
+  // with organizationId" every tenant model has (test/migrations.test.ts).
+  @@unique([organizationId])
+  @@map("customs_profiles")
+}
+
 // ---------- Auth & growth (not tenant-scoped) ----------
 
 // (NEW vs brief) §7.1: magic-link tokens are single-use, 15-minute, and stored hashed. The raw
@@ -113,6 +165,7 @@ model MagicLinkToken {
   ip        String?
 
   @@index([email, createdAt]) // rate limiting: 5 link requests / hour / email (§7.1)
+  @@index([expiresAt]) // (NEW vs brief, 0004) cleanup of expired tokens (README "Magic-link cleanup")
   @@map("magic_link_tokens")
 }
 
@@ -232,23 +285,31 @@ model Quote {
   validUntil    DateTime @map("valid_until") // freight rate expiry
 
   // Aggregates in GBP, computed from lines
-  goodsValueGbp        Decimal @map("goods_value_gbp") @db.Decimal(14, 2)
-  freightCost          Decimal @map("freight_cost") @db.Decimal(14, 2)
-  freightToBorderGbp   Decimal @map("freight_to_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 dutiable leg — engine QuoteTotals.freightToBorderGbp
-  freightPostBorderGbp Decimal @map("freight_post_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 VAT-base-only leg — engine QuoteTotals.freightPostBorderGbp
-  originFees           Decimal @map("origin_fees") @db.Decimal(14, 2)
-  destinationFees      Decimal @map("destination_fees") @db.Decimal(14, 2)
-  insurancePremium     Decimal @default(0) @map("insurance_premium") @db.Decimal(14, 2)
-  customsValue         Decimal @map("customs_value") @db.Decimal(14, 2) // not "CIF" — see §5.3
-  totalDuty            Decimal @map("total_duty") @db.Decimal(14, 2)
-  totalVat             Decimal @map("total_vat") @db.Decimal(14, 2)
-  vatRecoverable       Boolean @map("vat_recoverable") // postponed VAT accounting
-  platformFee          Decimal @map("platform_fee") @db.Decimal(14, 2)
-  totalLandedCost      Decimal @map("total_landed_cost") @db.Decimal(14, 2) // incl. VAT
-  totalLandedCostExVat Decimal @map("total_landed_cost_ex_vat") @db.Decimal(14, 2) // the number VAT-registered users care about
-  supplierBorneDuty    Decimal @default(0) @map("supplier_borne_duty") @db.Decimal(14, 2) // (NEW vs brief) DDP: duty the supplier bears, informational — engine QuoteTotals.supplierBorneDuty
-  supplierBorneVat     Decimal @default(0) @map("supplier_borne_vat") @db.Decimal(14, 2) // (NEW vs brief) DDP: VAT the supplier bears — engine QuoteTotals.supplierBorneVat
-  apportionmentBasis   String  @map("apportionment_basis") // (NEW vs brief) §5.4 "store the basis on the quote" — "SEA_WEIGHT_OR_MEASURE" | "AIR_VOLUMETRIC_6000"
+  goodsValueGbp        Decimal        @map("goods_value_gbp") @db.Decimal(14, 2)
+  freightCost          Decimal        @map("freight_cost") @db.Decimal(14, 2)
+  freightToBorderGbp   Decimal        @map("freight_to_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 dutiable leg — engine QuoteTotals.freightToBorderGbp
+  freightPostBorderGbp Decimal        @map("freight_post_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 VAT-base-only leg — engine QuoteTotals.freightPostBorderGbp
+  originFees           Decimal        @map("origin_fees") @db.Decimal(14, 2)
+  destinationFees      Decimal        @map("destination_fees") @db.Decimal(14, 2)
+  insurancePremium     Decimal        @default(0) @map("insurance_premium") @db.Decimal(14, 2)
+  customsValue         Decimal        @map("customs_value") @db.Decimal(14, 2) // not "CIF" — see §5.3
+  totalDuty            Decimal        @map("total_duty") @db.Decimal(14, 2)
+  totalVat             Decimal        @map("total_vat") @db.Decimal(14, 2)
+  vatRecoverable       Boolean        @map("vat_recoverable") // postponed VAT accounting
+  platformFee          Decimal        @map("platform_fee") @db.Decimal(14, 2)
+  totalLandedCost      Decimal        @map("total_landed_cost") @db.Decimal(14, 2) // incl. VAT
+  totalLandedCostExVat Decimal        @map("total_landed_cost_ex_vat") @db.Decimal(14, 2) // the number VAT-registered users care about
+  supplierBorneDuty    Decimal        @default(0) @map("supplier_borne_duty") @db.Decimal(14, 2) // (NEW vs brief) DDP: duty the supplier bears, informational — engine QuoteTotals.supplierBorneDuty
+  supplierBorneVat     Decimal        @default(0) @map("supplier_borne_vat") @db.Decimal(14, 2) // (NEW vs brief) DDP: VAT the supplier bears — engine QuoteTotals.supplierBorneVat
+  apportionmentBasis   String         @map("apportionment_basis") // (NEW vs brief) §5.4 "store the basis on the quote" — "SEA_WEIGHT_OR_MEASURE" | "AIR_VOLUMETRIC_6000"
+  // engine calcVersion 1.1 outputs. Defaults keep migration 0003 additive: quotes
+  // computed before 1.1 read as "not postponed, nothing extra" (their calcVersion says so).
+  vatPostponed         Boolean        @default(false) @map("vat_postponed") // (NEW vs brief) engine QuoteTotals.vatPostponed — PVA in effect, VAT not paid at the border
+  borderOutlay         Decimal        @default(0) @map("border_outlay") @db.Decimal(14, 2) // (NEW vs brief) engine QuoteTotals.borderOutlay — duty (+ VAT unless postponed) payable at the border; cash, not cost
+  assistsGbp           Decimal        @default(0) @map("assists_gbp") @db.Decimal(14, 2) // (NEW vs brief) engine QuoteTotals.assistsGbp — tooling/moulds etc. added to customs value
+  financingFee         Decimal        @default(0) @map("financing_fee") @db.Decimal(14, 2) // (NEW vs brief) engine QuoteTotals.financingFee — broker deferment fee
+  inlandVatAdjustment  Decimal        @default(0) @map("inland_vat_adjustment") @db.Decimal(14, 2) // (NEW vs brief) engine QuoteTotals.inlandVatAdjustment — VAT-base padding, not landed cost
+  paymentMethod        PaymentMethod? @map("payment_method") // (NEW vs brief) routing in force when computed — a snapshot of CustomsProfile.paymentMethod, not a reference
 
   warnings    Json // array of {code, message} e.g. ADD_APPLIES, HS_UNVERIFIED
   calcVersion String    @map("calc_version") // engine version that produced this quote
@@ -267,46 +328,49 @@ model Quote {
 }
 
 model QuoteLine {
-  id                            String   @id @default(uuid()) @db.Uuid
-  organizationId                String   @map("organization_id") @db.Uuid // (NEW vs brief) denormalised for RLS
-  quoteId                       String   @map("quote_id") @db.Uuid
-  productId                     String   @map("product_id") @db.Uuid
-  quantity                      Int
+  id                              String   @id @default(uuid()) @db.Uuid
+  organizationId                  String   @map("organization_id") @db.Uuid // (NEW vs brief) denormalised for RLS
+  quoteId                         String   @map("quote_id") @db.Uuid
+  productId                       String   @map("product_id") @db.Uuid
+  quantity                        Int
   // Snapshots
-  hsCode                        String   @map("hs_code")
-  originCountry                 String   @map("origin_country")
-  unitValue                     Decimal  @map("unit_value") @db.Decimal(14, 4)
-  currency                      String
-  unitValueGbp                  Decimal  @map("unit_value_gbp") @db.Decimal(14, 4)
-  lineGoodsValueGbp             Decimal  @map("line_goods_value_gbp") @db.Decimal(14, 2)
-  lineWeightKg                  Decimal  @map("line_weight_kg") @db.Decimal(10, 3)
-  lineVolumeCbm                 Decimal  @map("line_volume_cbm") @db.Decimal(10, 4)
-  chargeableWeight              Decimal  @map("chargeable_weight") @db.Decimal(14, 4) // (NEW vs brief) §5.4 apportionment share basis — engine LineResult.chargeableWeight
+  hsCode                          String   @map("hs_code")
+  originCountry                   String   @map("origin_country")
+  unitValue                       Decimal  @map("unit_value") @db.Decimal(14, 4)
+  currency                        String
+  unitValueGbp                    Decimal  @map("unit_value_gbp") @db.Decimal(14, 4)
+  lineGoodsValueGbp               Decimal  @map("line_goods_value_gbp") @db.Decimal(14, 2)
+  lineWeightKg                    Decimal  @map("line_weight_kg") @db.Decimal(10, 3)
+  lineVolumeCbm                   Decimal  @map("line_volume_cbm") @db.Decimal(10, 4)
+  chargeableWeight                Decimal  @map("chargeable_weight") @db.Decimal(14, 4) // (NEW vs brief) §5.4 apportionment share basis — engine LineResult.chargeableWeight
   // Tariff result
-  tariffMeasureId               String?  @map("tariff_measure_id") // HMRC measure SID we applied
-  dutyType                      String   @map("duty_type") // "AD_VALOREM" | "SPECIFIC" | "COMPOUND" | "NONE"
-  dutyRatePct                   Decimal? @map("duty_rate_pct") @db.Decimal(7, 4)
-  dutySpecific                  Json?    @map("duty_specific") // {amount, unit, per} for £/kg etc.
-  preferenceClaimed             Boolean  @default(false) @map("preference_claimed")
-  addRatePct                    Decimal? @map("add_rate_pct") @db.Decimal(7, 4) // anti-dumping, if any
-  vatRatePct                    Decimal  @map("vat_rate_pct") @db.Decimal(5, 2) // 20 / 5 / 0
+  tariffMeasureId                 String?  @map("tariff_measure_id") // HMRC measure SID we applied
+  dutyType                        String   @map("duty_type") // "AD_VALOREM" | "SPECIFIC" | "COMPOUND" | "NONE"
+  dutyRatePct                     Decimal? @map("duty_rate_pct") @db.Decimal(7, 4)
+  dutySpecific                    Json?    @map("duty_specific") // {amount, unit, per} for £/kg etc.
+  preferenceClaimed               Boolean  @default(false) @map("preference_claimed")
+  addRatePct                      Decimal? @map("add_rate_pct") @db.Decimal(7, 4) // anti-dumping, if any
+  vatRatePct                      Decimal  @map("vat_rate_pct") @db.Decimal(5, 2) // 20 / 5 / 0
   // Allocations (freight apportioned by chargeable weight — §5.4)
-  allocatedFreightGbp           Decimal  @map("allocated_freight_gbp") @db.Decimal(14, 2)
-  allocatedFreightToBorderGbp   Decimal  @map("allocated_freight_to_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 split — engine LineResult.allocatedFreightToBorderGbp
-  allocatedFreightPostBorderGbp Decimal  @map("allocated_freight_post_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 split
-  allocatedOriginFeesGbp        Decimal  @map("allocated_origin_fees_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of shipment-level origin fees
-  allocatedDestinationFeesGbp   Decimal  @map("allocated_destination_fees_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of destination fees
-  allocatedInsuranceGbp         Decimal  @map("allocated_insurance_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of insurance premium
-  allocatedPlatformFeeGbp       Decimal  @map("allocated_platform_fee_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of platform fee
-  lineCustomsValueGbp           Decimal  @map("line_customs_value_gbp") @db.Decimal(14, 2)
-  lineDutyGbp                   Decimal  @map("line_duty_gbp") @db.Decimal(14, 2)
-  lineVatGbp                    Decimal  @map("line_vat_gbp") @db.Decimal(14, 2)
-  supplierBorneDutyGbp          Decimal  @default(0) @map("supplier_borne_duty_gbp") @db.Decimal(14, 2) // (NEW vs brief) DDP, informational — engine LineResult.supplierBorneDutyGbp
-  supplierBorneVatGbp           Decimal  @default(0) @map("supplier_borne_vat_gbp") @db.Decimal(14, 2) // (NEW vs brief) DDP, informational
-  lineLandedCostExVatGbp        Decimal  @map("line_landed_cost_ex_vat_gbp") @db.Decimal(14, 2) // (NEW vs brief) line total ex VAT — engine LineResult.lineLandedCostExVatGbp
-  lineLandedCostGbp             Decimal  @map("line_landed_cost_gbp") @db.Decimal(14, 2) // (NEW vs brief) line total incl. VAT
-  landedCostPerUnit             Decimal  @map("landed_cost_per_unit") @db.Decimal(14, 4)
-  landedCostPerUnitIncVat       Decimal  @map("landed_cost_per_unit_inc_vat") @db.Decimal(14, 4) // (NEW vs brief) engine LineResult.landedCostPerUnitIncVat
+  allocatedFreightGbp             Decimal  @map("allocated_freight_gbp") @db.Decimal(14, 2)
+  allocatedFreightToBorderGbp     Decimal  @map("allocated_freight_to_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 split — engine LineResult.allocatedFreightToBorderGbp
+  allocatedFreightPostBorderGbp   Decimal  @map("allocated_freight_post_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 split
+  allocatedOriginFeesGbp          Decimal  @map("allocated_origin_fees_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of shipment-level origin fees
+  allocatedDestinationFeesGbp     Decimal  @map("allocated_destination_fees_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of destination fees
+  allocatedInsuranceGbp           Decimal  @map("allocated_insurance_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of insurance premium
+  allocatedPlatformFeeGbp         Decimal  @map("allocated_platform_fee_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of platform fee
+  assistsGbp                      Decimal  @default(0) @map("assists_gbp") @db.Decimal(14, 2) // (NEW vs brief) calcVersion 1.1 — engine LineResult.assistsGbp
+  allocatedFinancingFeeGbp        Decimal  @default(0) @map("allocated_financing_fee_gbp") @db.Decimal(14, 2) // (NEW vs brief) calcVersion 1.1 — per-line share of the broker deferment fee
+  allocatedInlandVatAdjustmentGbp Decimal  @default(0) @map("allocated_inland_vat_adjustment_gbp") @db.Decimal(14, 2) // (NEW vs brief) calcVersion 1.1 — per-line share of the VAT-base inland adjustment
+  lineCustomsValueGbp             Decimal  @map("line_customs_value_gbp") @db.Decimal(14, 2)
+  lineDutyGbp                     Decimal  @map("line_duty_gbp") @db.Decimal(14, 2)
+  lineVatGbp                      Decimal  @map("line_vat_gbp") @db.Decimal(14, 2)
+  supplierBorneDutyGbp            Decimal  @default(0) @map("supplier_borne_duty_gbp") @db.Decimal(14, 2) // (NEW vs brief) DDP, informational — engine LineResult.supplierBorneDutyGbp
+  supplierBorneVatGbp             Decimal  @default(0) @map("supplier_borne_vat_gbp") @db.Decimal(14, 2) // (NEW vs brief) DDP, informational
+  lineLandedCostExVatGbp          Decimal  @map("line_landed_cost_ex_vat_gbp") @db.Decimal(14, 2) // (NEW vs brief) line total ex VAT — engine LineResult.lineLandedCostExVatGbp
+  lineLandedCostGbp               Decimal  @map("line_landed_cost_gbp") @db.Decimal(14, 2) // (NEW vs brief) line total incl. VAT
+  landedCostPerUnit               Decimal  @map("landed_cost_per_unit") @db.Decimal(14, 4)
+  landedCostPerUnitIncVat         Decimal  @map("landed_cost_per_unit_inc_vat") @db.Decimal(14, 4) // (NEW vs brief) engine LineResult.landedCostPerUnitIncVat
 
   organization Organization @relation(fields: [organizationId], references: [id]) // (NEW vs brief)
   // (NEW vs brief) composite FKs carry organization_id so a line can never reference a quote or

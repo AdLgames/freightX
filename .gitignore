@@ -13,3 +13,6 @@ coverage/
 *.tfstate.*
 .terraform.lock.hcl
 packages/db/generated/
+
+# Agent worktrees (temporary, local only)
+.claude/worktrees/

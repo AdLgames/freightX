@@ -132,6 +132,7 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
     unitValue: Decimal;
     unitWeightKg: Decimal;
     unitVolumeCbm: Decimal;
+    assists: Decimal;
   }>;
   try {
     parsedLines = input.lines.map((line) => ({
@@ -139,6 +140,7 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
       unitValue: D(line.unitValue),
       unitWeightKg: D(line.unitWeightKg),
       unitVolumeCbm: D(line.unitVolumeCbm),
+      assists: line.assistsGbp !== undefined ? D(line.assistsGbp) : ZERO,
     }));
   } catch (err) {
     return fail(
@@ -159,7 +161,12 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
         warnings,
       );
     }
-    if (p.unitValue.isNegative() || p.unitWeightKg.isNegative() || p.unitVolumeCbm.isNegative()) {
+    if (
+      p.unitValue.isNegative() ||
+      p.unitWeightKg.isNegative() ||
+      p.unitVolumeCbm.isNegative() ||
+      p.assists.isNegative()
+    ) {
       return fail(
         'validate',
         'NEGATIVE_VALUE',
@@ -271,6 +278,8 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
   let rateSource = 'NONE';
   let rateFetchedAt = asOfIso;
   let validUntilMs = asOfMs;
+  // True when no provider told us the UK inland leg; drives the optional VAT-base adjustment.
+  let postBorderUnknown = true;
 
   const freight = input.freight;
   if (freight === null) {
@@ -291,6 +300,7 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
         );
       } else {
         postBorder = D(freight.postBorderGbp);
+        postBorderUnknown = false;
       }
     } catch (err) {
       return fail(
@@ -440,6 +450,64 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
       return fail('validate', 'NEGATIVE_VALUE', 'Platform fee must not be negative.', warnings);
   }
 
+  // ---------- ADR-0011 inputs: PVA, broker deferment, inland VAT adjustment ----------
+  let vatPostponed = false;
+  if (input.vatPostponed === true) {
+    if (!input.vatRegistered) {
+      warnings.add(
+        'PVA_REQUIRES_VAT_REGISTRATION',
+        'Postponed VAT accounting needs a UK VAT registration; import VAT is shown as payable at the border.',
+      );
+    } else if (!plan.supplierBearsDutyAndVat) {
+      vatPostponed = true;
+    }
+  }
+
+  let deferment: { feePct: Decimal; minimum: Decimal } | null = null;
+  let inlandVatAdjustment = ZERO;
+  try {
+    if (input.brokerDeferment) {
+      deferment = {
+        feePct: D(input.brokerDeferment.feePct),
+        minimum: D(input.brokerDeferment.minimumGbp),
+      };
+      if (deferment.feePct.isNegative() || deferment.minimum.isNegative()) {
+        return fail(
+          'validate',
+          'NEGATIVE_VALUE',
+          'Deferment fee terms must not be negative.',
+          warnings,
+        );
+      }
+    }
+    if (input.inlandVatAdjustmentGbp !== undefined && input.inlandVatAdjustmentGbp !== null) {
+      const adj = D(input.inlandVatAdjustmentGbp);
+      if (adj.isNegative()) {
+        return fail(
+          'validate',
+          'NEGATIVE_VALUE',
+          'Inland VAT adjustment must not be negative.',
+          warnings,
+        );
+      }
+      // Only when the UK leg is unknown and the buyer is the one paying for it.
+      if (postBorderUnknown && plan.buyerPaysPostBorderFreight && adj.gt(0)) {
+        inlandVatAdjustment = adj;
+        warnings.add(
+          'INLAND_VAT_ADJUSTMENT',
+          `UK inland costs are unknown, so £${fixed2(adj)} was added to the VAT base as an estimate. UK delivery is NOT included in the landed cost.`,
+        );
+      }
+    }
+  } catch (err) {
+    return fail(
+      'validate',
+      'BAD_DECIMAL',
+      err instanceof Error ? err.message : String(err),
+      warnings,
+    );
+  }
+
   // ---------- per-line goods values and tariffs ----------
   const basis = apportionmentBasisFor(input.mode);
   const lineBase = parsedLines.map((p) => {
@@ -481,15 +549,25 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
   const allocSupplierPostBorder = allocate(supplierPostBorder, valueWeights);
   const allocInsurance = allocate(insurancePaid, valueWeights);
   const allocPlatform = allocate(platformFee, valueWeights);
+  const allocInlandVat = allocate(inlandVatAdjustment, chargeableWeights);
 
-  // ---------- per-line duty and VAT (§5.3) ----------
-  const lines: LineResult[] = lineBase.map((l, i) => {
+  // ---------- per-line duty and VAT (§5.3) — pass 1: taxes ----------
+  const supplierBorne = plan.supplierBearsDutyAndVat;
+  const taxed = lineBase.map((l, i) => {
     const at = (arr: Decimal[]): Decimal => arr[i] ?? ZERO;
+    if (l.assists.gt(0)) {
+      warnings.add(
+        'ASSISTS_INCLUDED',
+        `£${fixed2(l.assists)} of tooling/assists added to the customs value (dutiable).`,
+        l.line.ref,
+      );
+    }
     const customsValue = round2(
       l.lineGoodsValueGbp
         .plus(at(allocOrigin))
         .plus(at(allocToBorder))
         .plus(at(allocInsurance))
+        .plus(l.assists)
         .minus(at(allocSupplierPostBorder)),
     );
     const dutyRaw = computeLineDuty(l.tariff.components, l.tariff.addRatePct, {
@@ -502,12 +580,37 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
       .plus(dutyComputed)
       .plus(at(allocPostBorder))
       .plus(at(allocDestination))
-      .plus(at(allocSupplierPostBorder));
+      .plus(at(allocSupplierPostBorder))
+      .plus(at(allocInlandVat));
     const vatComputed = round2(vatBase.times(l.tariff.vatRatePct).div(100));
-
-    const supplierBorne = plan.supplierBearsDutyAndVat;
     const lineDuty = supplierBorne ? ZERO : dutyComputed;
     const lineVat = supplierBorne ? ZERO : vatComputed;
+    const outlay = lineDuty.plus(vatPostponed ? ZERO : lineVat);
+    return { customsValue, dutyComputed, vatComputed, lineDuty, lineVat, outlay };
+  });
+
+  // ---------- broker deferment fee on the cash the forwarder advances ----------
+  const borderOutlay = sum(taxed.map((t) => t.outlay));
+  let financingFee = ZERO;
+  if (deferment && borderOutlay.gt(0)) {
+    const pctFee = round2(borderOutlay.times(deferment.feePct).div(100));
+    financingFee = pctFee.gte(deferment.minimum) ? pctFee : round2(deferment.minimum);
+    warnings.add(
+      'BROKER_DEFERMENT_FEE',
+      `Forwarder deferment fee £${fixed2(financingFee)} (${deferment.feePct.toString()}% of £${fixed2(borderOutlay)} advanced, minimum £${fixed2(deferment.minimum)}).`,
+    );
+  }
+  const allocFinancing = allocate(
+    financingFee,
+    taxed.map((t) => t.outlay),
+  );
+
+  // ---------- pass 2: landed cost ----------
+  const lines: LineResult[] = lineBase.map((l, i) => {
+    const at = (arr: Decimal[]): Decimal => arr[i] ?? ZERO;
+    const t = taxed[i];
+    if (t === undefined) throw new Error('compute: unreachable — missing taxed line');
+    const { customsValue, dutyComputed, vatComputed, lineDuty, lineVat } = t;
 
     const lineLandedExVat = l.lineGoodsValueGbp
       .plus(at(allocToBorder))
@@ -515,7 +618,9 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
       .plus(at(allocOrigin))
       .plus(at(allocDestination))
       .plus(at(allocInsurance))
+      .plus(l.assists)
       .plus(lineDuty)
+      .plus(at(allocFinancing))
       .plus(at(allocPlatform));
     const lineLanded = lineLandedExVat.plus(lineVat);
 
@@ -545,6 +650,9 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
       allocatedDestinationFeesGbp: fixed2(at(allocDestination)),
       allocatedInsuranceGbp: fixed2(at(allocInsurance)),
       allocatedPlatformFeeGbp: fixed2(at(allocPlatform)),
+      assistsGbp: fixed2(l.assists),
+      allocatedFinancingFeeGbp: fixed2(at(allocFinancing)),
+      allocatedInlandVatAdjustmentGbp: fixed2(at(allocInlandVat)),
       lineCustomsValueGbp: fixed2(customsValue),
       lineDutyGbp: fixed2(lineDuty),
       lineVatGbp: fixed2(lineVat),
@@ -591,6 +699,11 @@ export const computeQuote = (input: QuoteInput): ComputeResult => {
       totalDuty: fixed2(totalDuty),
       totalVat: fixed2(totalVat),
       vatRecoverable: input.vatRegistered && !plan.supplierBearsDutyAndVat,
+      vatPostponed,
+      borderOutlay: fixed2(borderOutlay),
+      assistsGbp: fixed2(totalOf((l) => l.assistsGbp)),
+      financingFee: fixed2(financingFee),
+      inlandVatAdjustment: fixed2(inlandVatAdjustment),
       platformFee: fixed2(platformFee),
       totalLandedCostExVat: fixed2(totalLandedCostExVat),
       totalLandedCost: fixed2(totalLandedCost),

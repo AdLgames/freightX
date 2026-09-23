@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from '../generated/client/index.js';
 import type { ITXClientDenyList } from '../generated/client/runtime/library.js';
 
 /**
- * Tenant scoping — first line of defence (§7.2). Postgres RLS (migration 0002) is the second.
+ * Tenant scoping — first line of defence (§7.2). Postgres RLS (migrations 0002, 0003) is the second.
  *
  * Two layers, use both:
  *   1. `forOrganization(prisma, orgId)` — a Prisma client extension that rewrites the arguments of
@@ -38,6 +38,7 @@ export const TENANT_MODELS = [
   'Document',
   'AuditLog',
   'OutboxEvent',
+  'CustomsProfile',
 ] as const;
 export type TenantModel = (typeof TENANT_MODELS)[number];
 
@@ -64,6 +65,7 @@ export const TENANT_TABLES: Readonly<Record<TenantModel, string>> = {
   Document: 'documents',
   AuditLog: 'audit_logs',
   OutboxEvent: 'outbox_events',
+  CustomsProfile: 'customs_profiles',
 };
 
 export const isTenantModel = (model: string): model is TenantModel =>

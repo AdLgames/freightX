@@ -1,13 +1,21 @@
 import type { RateSheetFreightProvider, UkTradeTariffClient } from '@harbour/adapters';
 import { CALC_VERSION } from '@harbour/engine';
-import { createStores, type Stores } from './db.server';
-import { loadEnv, type Env } from './env.server';
+import { createStores, getPrisma, type Stores } from './db.server';
+import {
+  loadEnv,
+  pricingConfigFromEnv,
+  tariffApiKeyFromEnv,
+  type Env,
+  type PricingConfig,
+} from './env.server';
 import { seedFxStore, type FxSeedSummary } from './fx.server';
 import { loadFreightProvider, type LaneOption, type RateSheetMeta } from './freight.server';
 import { createLogger, type Logger } from './logger.server';
 import { createRateLimiter, type RateLimiter } from './rate-limit.server';
+import { createRedisClient } from './redis.server';
 import { createTariffClient } from './tariff.server';
 import { createTurnstile, type TurnstileVerifier } from './turnstile.server';
+import { createAuthServices, type AuthServices } from './workspace.server';
 
 /**
  * Composition root. Built once per process (memoised on `globalThis` so `react-router dev`
@@ -26,8 +34,12 @@ export interface AppServices {
   rateSheet: RateSheetMeta;
   lanes: LaneOption[];
   fx: FxSeedSummary;
+  /** Deferment fee defaults and inland VAT adjustments from env (not user input). */
+  pricing: PricingConfig;
   calcVersion: string;
   startedAt: Date;
+  /** Sign-in, sessions and the workspace's database access (M1). See workspace.server.ts. */
+  auth: AuthServices;
 }
 
 export interface AppOverrides {
@@ -43,18 +55,31 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
   const startedAt = now();
 
   const stores = createStores(env, logger);
-  const { limiter, backend } = await createRateLimiter(env.REDIS_URL, (err) =>
-    logger.error('rate_limit.backend_error', {
-      error: err instanceof Error ? err.message : String(err),
-    }),
+  const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+  // One Redis connection shared by the rate limiter and the session store.
+  const redis = env.REDIS_URL
+    ? await createRedisClient(env.REDIS_URL, (err) =>
+        logger.error('redis.error', { error: errorText(err) }),
+      )
+    : null;
+  const { limiter, backend } = createRateLimiter(redis, (err) =>
+    logger.error('rate_limit.backend_error', { error: errorText(err) }),
   );
+  const auth = createAuthServices({
+    env,
+    logger,
+    redis,
+    prisma: env.DATABASE_URL ? getPrisma(env.DATABASE_URL) : null,
+  });
   const turnstile = createTurnstile({
     siteKey: env.TURNSTILE_SITE_KEY,
     secretKey: env.TURNSTILE_SECRET_KEY,
     logger,
     production: env.NODE_ENV === 'production',
   });
-  const tariff = createTariffClient({ cache: stores.tariffCache });
+  const tariffApiKey = tariffApiKeyFromEnv(env);
+  const tariff = createTariffClient({ cache: stores.tariffCache, apiKey: tariffApiKey });
+  const pricing = pricingConfigFromEnv(env);
   const { provider, meta, lanes } = loadFreightProvider({
     rateSheetPath: env.RATE_SHEET_PATH,
     logger,
@@ -70,6 +95,12 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     turnstile: turnstile.enabled,
     fxSource: fx.source,
     stores: stores.backend,
+    // Presence only — the key itself is never logged.
+    tariffApiKey: tariffApiKey !== null,
+    brokerDefermentDefaults:
+      pricing.brokerDefermentDefaults.feePct !== null ||
+      pricing.brokerDefermentDefaults.minimumGbp !== null,
+    inlandVatAdjustmentModes: Object.keys(pricing.inlandVatAdjustmentGbp),
   });
 
   return {
@@ -84,8 +115,10 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     rateSheet: meta,
     lanes,
     fx,
+    pricing,
     calcVersion: CALC_VERSION,
     startedAt,
+    auth,
   };
 };
 

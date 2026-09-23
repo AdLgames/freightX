@@ -1,0 +1,174 @@
+{
+  "name": "33-inland-vat-adjustment-lcl",
+  "notes": "Broker test (incidental costs): rate source gave no UK leg → FREIGHT_SPLIT_ASSUMED, post-border 0. £170 LCL estimate added to the VAT base only: 4440 + 355.20 + 235 + 170 = 5200.20 → VAT 1040.04. Landed ex VAT = 3900 + 400 + 120 + 235 + 20 + 355.20 = 5030.20 (UK delivery NOT included; warning says so).",
+  "input": {
+    "incoterm": "EXW",
+    "mode": "SEA_LCL",
+    "originCountry": "CN",
+    "originPort": "CNSHA",
+    "destinationPort": "GBFXT",
+    "lines": [
+      {
+        "ref": "SKU-1",
+        "hsCode": "9503004100",
+        "hsCodeVerified": true,
+        "originCountry": "CN",
+        "quantity": 1000,
+        "unitValue": "5.00",
+        "currency": "USD",
+        "unitWeightKg": "0.5",
+        "unitVolumeCbm": "0.002",
+        "tariff": {
+          "kind": "MEASURES",
+          "verifiedAt": "2026-09-01T00:00:00Z",
+          "measures": [
+            {
+              "sid": "tc8",
+              "measureTypeId": "103",
+              "dutyExpression": "8.00 %",
+              "geographicalAreaId": "1011"
+            },
+            {
+              "sid": "v20",
+              "measureTypeId": "305",
+              "dutyExpression": "20.00 %",
+              "geographicalAreaId": "1011"
+            }
+          ]
+        }
+      }
+    ],
+    "fx": {
+      "rates": {
+        "USD": {
+          "rateToGbp": "0.78",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        },
+        "EUR": {
+          "rateToGbp": "0.86",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        },
+        "CNY": {
+          "rateToGbp": "0.11",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        }
+      }
+    },
+    "freight": {
+      "source": "RATE_SHEET_V1",
+      "fetchedAt": "2026-09-10T10:00:00Z",
+      "toBorderGbp": "400",
+      "postBorderGbp": null,
+      "originFeesGbp": "120",
+      "destinationFeesGbp": "180",
+      "clearanceFeeGbp": "55"
+    },
+    "insurance": {
+      "premiumGbp": "20"
+    },
+    "vatRegistered": true,
+    "inlandVatAdjustmentGbp": "170"
+  },
+  "expected": {
+    "ok": true,
+    "quote": {
+      "calcVersion": "1.1",
+      "status": "READY",
+      "warnings": [
+        {
+          "code": "FREIGHT_SPLIT_ASSUMED",
+          "message": "Rate source did not split freight at the UK border; 100% treated as to-border (dutiable).",
+          "blocking": false
+        },
+        {
+          "code": "INLAND_VAT_ADJUSTMENT",
+          "message": "UK inland costs are unknown, so £170.00 was added to the VAT base as an estimate. UK delivery is NOT included in the landed cost.",
+          "blocking": false
+        }
+      ],
+      "incoterm": "EXW",
+      "mode": "SEA_LCL",
+      "apportionmentBasis": "SEA_WEIGHT_OR_MEASURE",
+      "fxRate": "0.78",
+      "fxSource": "HMRC_MONTHLY",
+      "fxDate": "2026-09-01",
+      "fxSnapshots": {
+        "USD": {
+          "rateToGbp": "0.78",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        }
+      },
+      "rateSource": "RATE_SHEET_V1",
+      "rateFetchedAt": "2026-09-10T10:00:00Z",
+      "validUntil": "2026-09-17T10:00:00.000Z",
+      "totals": {
+        "goodsValueGbp": "3900.00",
+        "freightCost": "400.00",
+        "freightToBorderGbp": "400.00",
+        "freightPostBorderGbp": "0.00",
+        "originFees": "120.00",
+        "destinationFees": "235.00",
+        "insurancePremium": "20.00",
+        "customsValue": "4440.00",
+        "totalDuty": "355.20",
+        "totalVat": "1040.04",
+        "vatRecoverable": true,
+        "vatPostponed": false,
+        "borderOutlay": "1395.24",
+        "assistsGbp": "0.00",
+        "financingFee": "0.00",
+        "inlandVatAdjustment": "170.00",
+        "platformFee": "0.00",
+        "totalLandedCostExVat": "5030.20",
+        "totalLandedCost": "6070.24",
+        "supplierBorneDuty": "0.00",
+        "supplierBorneVat": "0.00"
+      },
+      "lines": [
+        {
+          "ref": "SKU-1",
+          "hsCode": "9503004100",
+          "originCountry": "CN",
+          "quantity": 1000,
+          "unitValue": "5.0000",
+          "currency": "USD",
+          "unitValueGbp": "3.9000",
+          "lineGoodsValueGbp": "3900.00",
+          "lineWeightKg": "500.000",
+          "lineVolumeCbm": "2.0000",
+          "chargeableWeight": "2.0000",
+          "tariffMeasureId": "tc8",
+          "dutyType": "AD_VALOREM",
+          "dutyRatePct": "8.0000",
+          "dutySpecific": null,
+          "preferenceClaimed": false,
+          "addRatePct": null,
+          "vatRatePct": "20.00",
+          "allocatedFreightGbp": "400.00",
+          "allocatedFreightToBorderGbp": "400.00",
+          "allocatedFreightPostBorderGbp": "0.00",
+          "allocatedOriginFeesGbp": "120.00",
+          "allocatedDestinationFeesGbp": "235.00",
+          "allocatedInsuranceGbp": "20.00",
+          "allocatedPlatformFeeGbp": "0.00",
+          "assistsGbp": "0.00",
+          "allocatedFinancingFeeGbp": "0.00",
+          "allocatedInlandVatAdjustmentGbp": "170.00",
+          "lineCustomsValueGbp": "4440.00",
+          "lineDutyGbp": "355.20",
+          "lineVatGbp": "1040.04",
+          "supplierBorneDutyGbp": "0.00",
+          "supplierBorneVatGbp": "0.00",
+          "lineLandedCostExVatGbp": "5030.20",
+          "lineLandedCostGbp": "6070.24",
+          "landedCostPerUnit": "5.0302",
+          "landedCostPerUnitIncVat": "6.0702"
+        }
+      ]
+    }
+  }
+}

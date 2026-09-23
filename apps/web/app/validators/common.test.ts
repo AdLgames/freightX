@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   checkbox,
   currency,
+  danNumber,
   decimalString,
   eori,
   fieldErrors,
@@ -174,5 +175,20 @@ describe('safeString / checkbox / fieldErrors', () => {
     expect(res.success).toBe(false);
     if (!res.success)
       expect(fieldErrors(res.error.issues)).toEqual({ _form: 'HS code must contain digits only.' });
+  });
+});
+
+describe('danNumber', () => {
+  it('accepts exactly 7 digits (trimmed) and rejects everything else', () => {
+    expect(danNumber.parse('1234567')).toBe('1234567');
+    expect(danNumber.parse(' 0012345 ')).toBe('0012345');
+    for (const bad of ['123456', '12345678', 'ABCDEFG', '123 4567', '-123456', '1234567a', '']) {
+      const res = danNumber.safeParse(bad);
+      expect(res.success, bad).toBe(false);
+      if (!res.success)
+        expect(res.error.issues[0]?.message).toBe(
+          'Your deferment account number (DAN) is 7 digits.',
+        );
+    }
   });
 });

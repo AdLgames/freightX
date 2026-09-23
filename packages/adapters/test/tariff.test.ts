@@ -173,6 +173,22 @@ describe('UkTradeTariffClient', () => {
       reason: 'MALFORMED',
     });
   });
+  it('sends configured extra headers (API key) on every request', async () => {
+    let seen: Record<string, string> | undefined;
+    const fetch: FetchLike = async (_url, init) => {
+      seen = init?.headers;
+      const body = fixture('commodity-9503004100.json');
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(body),
+        json: async () => body,
+      };
+    };
+    const client = new UkTradeTariffClient({ fetch, headers: { 'x-api-key': 'k' } });
+    await client.lookupCommodity('9503004100');
+    expect(seen).toMatchObject({ 'x-api-key': 'k', accept: 'application/json' });
+  });
   it('rejects non-10-digit codes before any network call', async () => {
     const { fetch, calls } = makeFetch(() => ({ status: 200, body: {} }));
     const client = new UkTradeTariffClient({ fetch });

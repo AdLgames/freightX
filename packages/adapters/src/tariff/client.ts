@@ -22,6 +22,11 @@ export interface UkTradeTariffClientOptions {
   cache?: TariffCacheStore;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Extra request headers, e.g. an API key once the Trade Tariff developer portal requires one.
+   * The header name is deployment config, not code (see docs/decisions-needed.md).
+   */
+  headers?: Readonly<Record<string, string>>;
 }
 
 export type TariffLookup =
@@ -52,6 +57,7 @@ export class UkTradeTariffClient {
   private readonly cache: TariffCacheStore;
   private readonly now: () => Date;
   private readonly sleep: ((ms: number) => Promise<void>) | undefined;
+  private readonly headers: Readonly<Record<string, string>>;
 
   constructor(opts: UkTradeTariffClientOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? 'https://www.trade-tariff.service.gov.uk/api/v2').replace(
@@ -64,6 +70,7 @@ export class UkTradeTariffClient {
     this.cache = opts.cache ?? new InMemoryTariffCache();
     this.now = opts.now ?? (() => new Date());
     this.sleep = opts.sleep;
+    this.headers = opts.headers ?? {};
   }
 
   private async getJson(path: string): Promise<unknown> {
@@ -79,7 +86,7 @@ export class UkTradeTariffClient {
         withTimeout(async (signal) => {
           const res = await this.fetchImpl(url, {
             signal,
-            headers: { accept: 'application/json' },
+            headers: { ...this.headers, accept: 'application/json' },
           });
           if (!res.ok) throw new HttpError(res.status, url);
           return res.json();

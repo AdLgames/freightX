@@ -1,7 +1,7 @@
-import type { QuoteWarning } from '@harbour/engine';
+import type { QuoteWarning, WarningCode } from '@harbour/engine';
 import { DISCLAIMER } from '../root';
 import type { PipelineOutcome } from '../services/quote-pipeline.server';
-import { gbp, isoDateTime, pct } from './format';
+import { count, gbp, isZeroAmount, isoDateTime, pad2, pct } from './format';
 
 export type QuoteOutcome = Extract<PipelineOutcome, { kind: 'QUOTE' }>;
 
@@ -10,6 +10,21 @@ const FX_SOURCE_LABEL: Record<string, string> = {
   ECB: 'ECB daily reference rate (fallback)',
   MANUAL: 'entered manually',
 };
+
+/** Plain-English explanations shown alongside the engine's message for newer warnings. */
+const WARNING_EXPLAINED: Partial<Record<WarningCode, string>> = {
+  ASSISTS_INCLUDED:
+    'Tooling, moulds or design you paid for separately count towards the customs value, so duty and import VAT are charged on them too.',
+  PVA_REQUIRES_VAT_REGISTRATION:
+    'Postponed VAT accounting is only open to VAT-registered businesses, so import VAT is shown as payable at the border. Tick "VAT registered" if your business is.',
+  BROKER_DEFERMENT_FEE:
+    'Your forwarder pays duty and import VAT to HMRC for you and charges a fee for advancing the money. The fee is included in your landed cost.',
+  INLAND_VAT_ADJUSTMENT:
+    'The freight quote did not include UK delivery, so an estimate was added to the amount import VAT is charged on. UK delivery itself is not in the landed cost.',
+};
+
+export const DAN_REMINDER =
+  'Under CDS your forwarder cannot use your DAN until you add their EORI in your CDS account authorisations.';
 
 function StatusBanner({
   status,
@@ -67,10 +82,12 @@ export function QuoteResult({
   outcome: QuoteOutcome;
   calcVersion: string;
 }) {
-  const { quote, tariff, freight, line, stages } = outcome;
+  const { quote, tariff, freight, line, stages, assists, dutyPayment } = outcome;
   const t = quote.totals;
   const lines = quote.lines;
   const isDdp = quote.incoterm === 'DDP';
+  const hasAssists = !isZeroAmount(t.assistsGbp);
+  const feeTerms = dutyPayment.brokerFeeTerms;
 
   return (
     <section aria-labelledby="result-heading" className="result">
@@ -87,6 +104,12 @@ export function QuoteResult({
             <Row label="Origin charges" value={gbp(t.originFees)} />
             <Row label="Destination charges and clearance" value={gbp(t.destinationFees)} />
             <Row label="Insurance premium" value={gbp(t.insurancePremium)} />
+            {hasAssists ? (
+              <Row
+                label="Tooling, moulds and design (assists), included in customs value"
+                value={gbp(t.assistsGbp)}
+              />
+            ) : null}
             <Row label="Customs value (duty base)" value={gbp(t.customsValue)} />
             <Row
               label={isDdp ? 'Import duty (borne by supplier)' : 'Import duty'}
@@ -96,10 +119,20 @@ export function QuoteResult({
               label={
                 isDdp
                   ? 'Import VAT (borne by supplier)'
-                  : `Import VAT${t.vatRecoverable ? ' (recoverable via postponed VAT accounting)' : ''}`
+                  : `Import VAT${t.vatPostponed ? ' (postponed: on your VAT return)' : t.vatRecoverable ? ' (recoverable on your VAT return)' : ''}`
               }
               value={gbp(isDdp ? t.supplierBorneVat : t.totalVat)}
             />
+            {dutyPayment.method === 'BROKER_DEFERMENT' ? (
+              <Row
+                label={
+                  feeTerms
+                    ? `Forwarder deferment fee (${pct(feeTerms.feePct)} of duty and VAT advanced, minimum ${gbp(pad2(feeTerms.minimumGbp))})`
+                    : 'Forwarder deferment fee (fee terms depend on your forwarder — not included)'
+                }
+                value={feeTerms ? gbp(t.financingFee) : 'not included'}
+              />
+            ) : null}
             <Row label="Platform fee" value={gbp(t.platformFee)} />
             <Row
               label="Total landed cost, excluding VAT"
@@ -110,6 +143,63 @@ export function QuoteResult({
           </tbody>
         </table>
       </div>
+
+      {assists ? (
+        <p className="muted">
+          {assists.method === 'HELPER'
+            ? `Assists: ${gbp(assists.totalCostGbp)} total × ${count(assists.shipmentQuantity)} units in this shipment ÷ ${count(assists.lifetimeUnits)} units = ${gbp(assists.amountGbp)}, added to the customs value.`
+            : `Assists: ${gbp(assists.amountGbp)} entered for this shipment, added to the customs value.`}
+        </p>
+      ) : null}
+      {!isZeroAmount(t.inlandVatAdjustment) ? (
+        <p className="muted">
+          Import VAT includes {gbp(t.inlandVatAdjustment)} added to the VAT base as an estimate of
+          UK inland costs, because the freight quote did not include UK delivery. That estimate is
+          not part of the landed cost.
+        </p>
+      ) : null}
+
+      <h3>Cash needed at the border</h3>
+      <div className="table-wrap">
+        <table className="stack totals">
+          <tbody>
+            <Row label="Import duty" value={gbp(isDdp ? '0.00' : t.totalDuty)} />
+            <Row
+              label={
+                t.vatPostponed ? 'Import VAT (postponed, not paid at the border)' : 'Import VAT'
+              }
+              value={gbp(isDdp || t.vatPostponed ? '0.00' : t.totalVat)}
+            />
+            <Row label="Cash needed at the border" value={gbp(t.borderOutlay)} total />
+          </tbody>
+        </table>
+      </div>
+      <ul className="notes">
+        {t.vatPostponed ? (
+          <li>
+            Import VAT {gbp(t.totalVat)} is accounted for on your VAT return, not paid at the
+            border.
+          </li>
+        ) : null}
+        {isDdp ? <li>Under DDP the supplier pays duty and import VAT.</li> : null}
+        {dutyPayment.method === 'BROKER_DEFERMENT' && !isDdp ? (
+          <li>
+            Your forwarder pays this to HMRC for you and invoices you for it
+            {feeTerms && !isZeroAmount(t.financingFee)
+              ? `, plus the ${gbp(t.financingFee)} deferment fee.`
+              : '.'}
+          </li>
+        ) : null}
+        {dutyPayment.method === 'OWN_DAN' ? (
+          <li>
+            Charged to your own duty deferment account. <strong>Reminder:</strong> {DAN_REMINDER}
+            {dutyPayment.danAuthorised ? ' You told us you have done this.' : ''}
+          </li>
+        ) : null}
+        {dutyPayment.method === 'CDS_CASH' ? (
+          <li>Paid from your CDS cash account before the goods are released.</li>
+        ) : null}
+      </ul>
 
       <h3>Per unit</h3>
       <div className="table-wrap">
@@ -216,12 +306,22 @@ export function QuoteResult({
         <>
           <h3>Things to know</h3>
           <ul className="warnings">
-            {quote.warnings.map((w) => (
-              <li key={`${w.code}-${w.lineRef ?? ''}`}>
-                <strong>{w.blocking ? 'Blocking: ' : ''}</strong>
-                {w.message} <span className="muted code">({w.code})</span>
-              </li>
-            ))}
+            {quote.warnings.map((w) => {
+              const explained = WARNING_EXPLAINED[w.code];
+              return (
+                <li key={`${w.code}-${w.lineRef ?? ''}`}>
+                  <strong>{w.blocking ? 'Blocking: ' : ''}</strong>
+                  {explained ? (
+                    <>
+                      {explained} <span className="muted">{w.message}</span>
+                    </>
+                  ) : (
+                    w.message
+                  )}{' '}
+                  <span className="muted code">({w.code})</span>
+                </li>
+              );
+            })}
           </ul>
         </>
       ) : null}

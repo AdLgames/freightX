@@ -64,7 +64,7 @@
   "expected": {
     "ok": true,
     "quote": {
-      "calcVersion": "1.0",
+      "calcVersion": "1.1",
       "status": "READY",
       "warnings": [
         {
@@ -101,6 +101,11 @@
         "totalDuty": "355.20",
         "totalVat": "1036.04",
         "vatRecoverable": true,
+        "vatPostponed": false,
+        "borderOutlay": "1391.24",
+        "assistsGbp": "0.00",
+        "financingFee": "0.00",
+        "inlandVatAdjustment": "0.00",
         "platformFee": "0.00",
         "totalLandedCostExVat": "5180.20",
         "totalLandedCost": "6216.24",
@@ -134,6 +139,9 @@
           "allocatedDestinationFeesGbp": "235.00",
           "allocatedInsuranceGbp": "20.00",
           "allocatedPlatformFeeGbp": "0.00",
+          "assistsGbp": "0.00",
+          "allocatedFinancingFeeGbp": "0.00",
+          "allocatedInlandVatAdjustmentGbp": "0.00",
           "lineCustomsValueGbp": "4440.00",
           "lineDutyGbp": "355.20",
           "lineVatGbp": "1036.04",

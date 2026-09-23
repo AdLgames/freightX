@@ -29,6 +29,22 @@ describe('redact', () => {
     expect(out.nested).toEqual({ Email: REDACTED, keep: 'fine' });
     expect(out.list).toEqual([{ email: REDACTED }]);
   });
+  it('masks deferment account numbers and API keys by key name', () => {
+    const out = redact({
+      dan: '1234567',
+      danNumber: '1234567',
+      apiKey: 'k',
+      TRADE_TARIFF_API_KEY: 'k',
+      dutyPayment: 'OWN_DAN',
+    }) as Record<string, unknown>;
+    expect(out).toEqual({
+      dan: REDACTED,
+      danNumber: REDACTED,
+      apiKey: REDACTED,
+      TRADE_TARIFF_API_KEY: REDACTED,
+      dutyPayment: 'OWN_DAN',
+    });
+  });
   it('scrubs emails, EORI and VAT numbers inside free-text strings', () => {
     expect(redactString('contact jane.doe+x@example.co.uk now')).toBe('contact [EMAIL] now');
     expect(redactString('eori GB123456789000 vat GB123456782 branch GB123456782001')).toBe(

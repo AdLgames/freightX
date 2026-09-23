@@ -48,3 +48,19 @@ export {
   type WarningCode,
 } from './warnings.js';
 export type * from './types.js';
+export {
+  ACTUALS_VERSION,
+  CATEGORY_BASIS,
+  COST_CATEGORIES,
+  absorbActuals,
+  type ActualCostInput,
+  type ActualsInput,
+  type ActualsLineInput,
+  type ActualsLineResult,
+  type ActualsResult,
+  type AllocationBasis,
+  type CategoryFigures,
+  type CostCategory,
+  type EstimateByCategory,
+  type UnplannedReason,
+} from './actuals.js';

@@ -28,7 +28,9 @@
     "migrate:diff": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script"
   },
   "dependencies": {
-    "@prisma/client": "~6.19.3"
+    "@harbour/adapters": "workspace:*",
+    "@prisma/client": "~6.19.3",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "prisma": "~6.19.3"

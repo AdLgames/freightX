@@ -31,12 +31,18 @@ export interface AuditEntry {
 /** Structural type satisfied by PrismaClient, a tenant-scoped client and either's transaction client. */
 export interface AuditWriter {
   auditLog: {
-    create(args: { data: Prisma.AuditLogUncheckedCreateInput }): Promise<unknown>;
+    createMany(args: { data: Prisma.AuditLogCreateManyInput[] }): Promise<unknown>;
   };
 }
 
+/**
+ * Written with `createMany` (a plain INSERT) rather than `create` (INSERT ... RETURNING): rows
+ * with a NULL organisation are deliberately unreadable through the app role (migration 0002), and
+ * Postgres applies the SELECT policy to RETURNING, so `create` would fail with "new row violates
+ * row-level security policy" for tenant-less events such as sign-in. Nothing reads the row back.
+ */
 export async function recordAudit(tx: AuditWriter, entry: AuditEntry): Promise<void> {
-  const data: Prisma.AuditLogUncheckedCreateInput = {
+  const data: Prisma.AuditLogCreateManyInput = {
     organizationId: entry.organizationId,
     userId: entry.userId,
     action: entry.action,
@@ -46,5 +52,5 @@ export async function recordAudit(tx: AuditWriter, entry: AuditEntry): Promise<v
     userAgent: entry.userAgent ?? null,
     metadata: entry.metadata ?? Prisma.JsonNull,
   };
-  await tx.auditLog.create({ data });
+  await tx.auditLog.createMany({ data: [data] });
 }

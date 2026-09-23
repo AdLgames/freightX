@@ -1,0 +1,165 @@
+{
+  "name": "35-ddp-single-invoice-5000",
+  "notes": "Broker test (DDP trap): £5,000 invoice with freight/insurance not itemised → HMRC values the whole £5,000. Duty 8% = 400.00 and VAT on 5400 = 1080.00 computed and shown as supplier-borne; buyer pays neither; DDP_SUPPLIER_BEARS_DUTY.",
+  "input": {
+    "incoterm": "DDP",
+    "mode": "SEA_LCL",
+    "originCountry": "CN",
+    "originPort": "CNSHA",
+    "destinationPort": "GBFXT",
+    "lines": [
+      {
+        "ref": "SKU-1",
+        "hsCode": "9503004100",
+        "hsCodeVerified": true,
+        "originCountry": "CN",
+        "quantity": 1000,
+        "unitValue": "5.00",
+        "currency": "GBP",
+        "unitWeightKg": "0.5",
+        "unitVolumeCbm": "0.002",
+        "tariff": {
+          "kind": "MEASURES",
+          "verifiedAt": "2026-09-01T00:00:00Z",
+          "measures": [
+            {
+              "sid": "tc8",
+              "measureTypeId": "103",
+              "dutyExpression": "8.00 %",
+              "geographicalAreaId": "1011"
+            },
+            {
+              "sid": "v20",
+              "measureTypeId": "305",
+              "dutyExpression": "20.00 %",
+              "geographicalAreaId": "1011"
+            }
+          ]
+        }
+      }
+    ],
+    "fx": {
+      "rates": {
+        "USD": {
+          "rateToGbp": "0.78",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        },
+        "EUR": {
+          "rateToGbp": "0.86",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        },
+        "CNY": {
+          "rateToGbp": "0.11",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        }
+      }
+    },
+    "freight": {
+      "source": "RATE_SHEET_V1",
+      "fetchedAt": "2026-09-10T10:00:00Z",
+      "toBorderGbp": "400",
+      "postBorderGbp": "150",
+      "originFeesGbp": "120",
+      "destinationFeesGbp": "180",
+      "clearanceFeeGbp": "55"
+    },
+    "insurance": null,
+    "vatRegistered": true
+  },
+  "expected": {
+    "ok": true,
+    "quote": {
+      "calcVersion": "1.1",
+      "status": "READY",
+      "warnings": [
+        {
+          "code": "FREIGHT_INCLUDED_IN_PRICE",
+          "message": "DDP: international freight is included in the supplier price and has not been added.",
+          "blocking": false
+        },
+        {
+          "code": "DDP_SUPPLIER_BEARS_DUTY",
+          "message": "DDP: the supplier is the importer of record and pays UK duty and VAT. DDP into the UK rarely works cleanly for micro-importers — confirm the supplier has a UK EORI and VAT registration.",
+          "blocking": false
+        }
+      ],
+      "incoterm": "DDP",
+      "mode": "SEA_LCL",
+      "apportionmentBasis": "SEA_WEIGHT_OR_MEASURE",
+      "fxRate": "1",
+      "fxSource": "HMRC_MONTHLY",
+      "fxDate": "2026-09-10",
+      "fxSnapshots": {},
+      "rateSource": "RATE_SHEET_V1",
+      "rateFetchedAt": "2026-09-10T10:00:00Z",
+      "validUntil": "2026-09-17T10:00:00.000Z",
+      "totals": {
+        "goodsValueGbp": "5000.00",
+        "freightCost": "0.00",
+        "freightToBorderGbp": "0.00",
+        "freightPostBorderGbp": "0.00",
+        "originFees": "0.00",
+        "destinationFees": "0.00",
+        "insurancePremium": "0.00",
+        "customsValue": "5000.00",
+        "totalDuty": "0.00",
+        "totalVat": "0.00",
+        "vatRecoverable": false,
+        "vatPostponed": false,
+        "borderOutlay": "0.00",
+        "assistsGbp": "0.00",
+        "financingFee": "0.00",
+        "inlandVatAdjustment": "0.00",
+        "platformFee": "0.00",
+        "totalLandedCostExVat": "5000.00",
+        "totalLandedCost": "5000.00",
+        "supplierBorneDuty": "400.00",
+        "supplierBorneVat": "1080.00"
+      },
+      "lines": [
+        {
+          "ref": "SKU-1",
+          "hsCode": "9503004100",
+          "originCountry": "CN",
+          "quantity": 1000,
+          "unitValue": "5.0000",
+          "currency": "GBP",
+          "unitValueGbp": "5.0000",
+          "lineGoodsValueGbp": "5000.00",
+          "lineWeightKg": "500.000",
+          "lineVolumeCbm": "2.0000",
+          "chargeableWeight": "2.0000",
+          "tariffMeasureId": "tc8",
+          "dutyType": "AD_VALOREM",
+          "dutyRatePct": "8.0000",
+          "dutySpecific": null,
+          "preferenceClaimed": false,
+          "addRatePct": null,
+          "vatRatePct": "20.00",
+          "allocatedFreightGbp": "0.00",
+          "allocatedFreightToBorderGbp": "0.00",
+          "allocatedFreightPostBorderGbp": "0.00",
+          "allocatedOriginFeesGbp": "0.00",
+          "allocatedDestinationFeesGbp": "0.00",
+          "allocatedInsuranceGbp": "0.00",
+          "allocatedPlatformFeeGbp": "0.00",
+          "assistsGbp": "0.00",
+          "allocatedFinancingFeeGbp": "0.00",
+          "allocatedInlandVatAdjustmentGbp": "0.00",
+          "lineCustomsValueGbp": "5000.00",
+          "lineDutyGbp": "0.00",
+          "lineVatGbp": "0.00",
+          "supplierBorneDutyGbp": "400.00",
+          "supplierBorneVatGbp": "1080.00",
+          "lineLandedCostExVatGbp": "5000.00",
+          "lineLandedCostGbp": "5000.00",
+          "landedCostPerUnit": "5.0000",
+          "landedCostPerUnitIncVat": "5.0000"
+        }
+      ]
+    }
+  }
+}

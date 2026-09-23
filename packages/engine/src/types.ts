@@ -58,6 +58,12 @@ export interface LineInput {
   unitWeightKg: DecimalInput;
   unitVolumeCbm: DecimalInput;
   preferenceClaimed?: boolean;
+  /**
+   * Assists (moulds, tooling, design, artwork) paid to or for the supplier separately from the
+   * invoice, apportioned to THIS line's units in this shipment, in GBP. Dutiable: added to the
+   * customs value (ADR-0011).
+   */
+  assistsGbp?: DecimalInput;
   tariff: TariffInput;
 }
 
@@ -122,8 +128,23 @@ export interface QuoteInput {
   /** FCA/FOB only: user states origin charges are NOT included in the supplier price. */
   includeOriginFees?: boolean;
   insurance?: { premiumGbp: DecimalInput } | null;
-  /** Drives `vatRecoverable` (postponed VAT accounting). */
+  /** Drives `vatRecoverable`. */
   vatRegistered: boolean;
+  /**
+   * Postponed VAT accounting: import VAT is declared on the VAT return instead of being paid at
+   * the border. Only honoured when `vatRegistered`; it changes cash at the border, not cost.
+   */
+  vatPostponed?: boolean;
+  /**
+   * Duty paid through the forwarder's deferment account: the forwarder charges a fee on the duty
+   * and VAT it pays up front. Percentages as decimal strings ("2.5" = 2.5%). Forwarder-specific.
+   */
+  brokerDeferment?: { feePct: DecimalInput; minimumGbp: DecimalInput } | null;
+  /**
+   * Estimated UK incidental costs (terminal handling and delivery to the first UK destination)
+   * added to the VAT base ONLY when the rate source did not provide the post-border leg.
+   */
+  inlandVatAdjustmentGbp?: DecimalInput | null;
   platformFeeGbp?: DecimalInput;
   /** ISO datetime used for measure date filtering. Defaults to freight.fetchedAt. */
   asOf?: string;
@@ -164,6 +185,9 @@ export interface LineResult {
   allocatedDestinationFeesGbp: string;
   allocatedInsuranceGbp: string;
   allocatedPlatformFeeGbp: string;
+  assistsGbp: string;
+  allocatedFinancingFeeGbp: string;
+  allocatedInlandVatAdjustmentGbp: string;
   lineCustomsValueGbp: string;
   lineDutyGbp: string;
   lineVatGbp: string;
@@ -189,6 +213,14 @@ export interface QuoteTotals {
   totalDuty: string;
   totalVat: string;
   vatRecoverable: boolean;
+  /** Postponed VAT accounting in effect: VAT is not paid at the border. */
+  vatPostponed: boolean;
+  /** Duty + VAT payable at the border (VAT excluded when postponed). Cash, not cost. */
+  borderOutlay: string;
+  assistsGbp: string;
+  financingFee: string;
+  /** VAT-base padding applied for unknown UK inland costs (not part of landed cost). */
+  inlandVatAdjustment: string;
   platformFee: string;
   totalLandedCostExVat: string;
   totalLandedCost: string;

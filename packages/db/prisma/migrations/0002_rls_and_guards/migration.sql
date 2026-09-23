@@ -43,7 +43,16 @@ GRANT USAGE ON SCHEMA public TO harbour_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO harbour_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO harbour_app;
 -- The app never touches Prisma's bookkeeping table.
-REVOKE ALL ON TABLE "_prisma_migrations" FROM harbour_app;
+-- Guarded: Prisma's shadow database (used by `prisma migrate dev`) has no _prisma_migrations
+-- table when replaying, so an unguarded REVOKE fails with P3006. Edited before any
+-- non-throwaway database applied this migration.
+DO $$
+BEGIN
+  IF to_regclass('"_prisma_migrations"') IS NOT NULL THEN
+    REVOKE ALL ON TABLE "_prisma_migrations" FROM harbour_app;
+  END IF;
+END
+$$;
 -- Append-only tables: belt (grants) and braces (triggers below, which also bind the owner).
 REVOKE UPDATE, DELETE ON TABLE "shipment_events", "audit_logs" FROM harbour_app;
 

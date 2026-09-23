@@ -13,10 +13,11 @@
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
     "test": "vitest run",
-    "vercel-build": "pnpm --filter @harbour/engine --filter @harbour/adapters run build && react-router build"
+    "vercel-build": "pnpm --filter @harbour/engine --filter @harbour/adapters --filter @harbour/db run build && react-router build"
   },
   "dependencies": {
     "@harbour/adapters": "workspace:*",
+    "@harbour/db": "workspace:*",
     "@harbour/engine": "workspace:*",
     "@react-router/node": "~7.18.4",
     "@react-router/serve": "~7.18.4",

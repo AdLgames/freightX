@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { InMemoryTariffCache, UkTradeTariffClient, type FetchLike } from '@harbour/adapters';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DAN_REMINDER, QuoteResult } from '../components/quote-result';
 import { createAppServices, setAppForTests, type AppServices } from '../services/app.server';
 import { loadEnv } from '../services/env.server';
 import { createLogger } from '../services/logger.server';
@@ -93,6 +95,13 @@ describe('calculator loader', () => {
     expect(data.turnstileSiteKey).toBeNull();
     expect(data.currencies).toContain('GBP');
     expect(data.rateSheet.version).toBe('RATE_SHEET_V1');
+    expect(data.dutyPaymentMethods.map((m) => m.value)).toEqual([
+      'BROKER_DEFERMENT',
+      'OWN_DAN',
+      'CDS_CASH',
+    ]);
+    // No env defaults → no invented fee terms.
+    expect(data.brokerDefaults).toEqual({ feePct: null, minimumGbp: null });
   });
 });
 
@@ -179,5 +188,130 @@ describe('calculator action', () => {
     expect(status).toBe(200);
     expect(data.outcome?.quote.status).toBe('INDICATIVE');
     expect(data.outcome?.quote.warnings.map((w) => w.code)).toContain('TARIFF_AMBIGUOUS');
+  });
+});
+
+describe('calculator action: assists, duty payment and PVA', () => {
+  let ipSeq = 0;
+  /** A fresh IP per call so these tests never share a rate-limit bucket. */
+  const submit = (fields: Record<string, string>) => {
+    ipSeq += 1;
+    return run(post({ ...VALID, ...fields }, { 'x-forwarded-for': `192.0.2.${ipSeq}` }));
+  };
+  const html = (data: CalculatorActionData): string => {
+    if (!data.outcome) throw new Error('no outcome to render');
+    return renderToStaticMarkup(<QuoteResult outcome={data.outcome} calcVersion="1.1" />);
+  };
+
+  it('adds a £1,000 assist to the customs value, stays READY, and shows it', async () => {
+    const { status, data } = await submit({ assistsGbp: '1000' });
+    expect(status).toBe(200);
+    const q = data.outcome?.quote;
+    expect(q?.status).toBe('READY');
+    expect(q?.totals.customsValue).toBe('2847.05'); // 1847.05 + 1000
+    expect(q?.totals.assistsGbp).toBe('1000.00');
+    const page = html(data);
+    expect(page).toContain('Tooling, moulds and design (assists), included in customs value');
+    expect(page).toContain('£1,000.00');
+    expect(page).toContain('£2,847.05');
+    expect(page).toContain('count towards the customs value'); // ASSISTS_INCLUDED, plain English
+  });
+
+  it('shows the helper computation (250 of 1,000 lifetime units → £250.00)', async () => {
+    const { status, data } = await submit({
+      quantity: '250',
+      assistTotalCostGbp: '1000',
+      assistTotalUnits: '1000',
+    });
+    expect(status).toBe(200);
+    expect(data.outcome?.quote.totals.assistsGbp).toBe('250.00');
+    expect(html(data)).toContain(
+      '£1,000.00 total × 250 units in this shipment ÷ 1,000 units = £250.00',
+    );
+  });
+
+  it('rejects an assist amount and the helper together', async () => {
+    const { status, data } = await submit({
+      assistsGbp: '250',
+      assistTotalCostGbp: '1000',
+      assistTotalUnits: '1000',
+    });
+    expect(status).toBe(400);
+    expect(data.errors.assistsGbp).toMatch(/not both/);
+    expect(data.outcome).toBeNull();
+  });
+
+  it('broker deferment with explicit terms: the fee appears in the totals and the page', async () => {
+    const { data } = await submit({
+      dutyPayment: 'BROKER_DEFERMENT',
+      brokerFeePct: '2.5',
+      brokerMinimumGbp: '25',
+    });
+    const t = data.outcome?.quote.totals;
+    expect(t?.financingFee).toBe('25.00');
+    expect(t?.borderOutlay).toBe('439.21');
+    expect(t?.totalLandedCostExVat).toBe('2221.05');
+    const page = html(data);
+    expect(page).toContain(
+      'Forwarder deferment fee (2.5% of duty and VAT advanced, minimum £25.00)',
+    );
+    expect(page).toContain('£25.00');
+    expect(page).toContain('Cash needed at the border');
+    expect(page).toContain('BROKER_DEFERMENT_FEE');
+  });
+
+  it('broker deferment without terms says fee terms depend on the forwarder', async () => {
+    const { data } = await submit({});
+    expect(data.outcome?.quote.totals.financingFee).toBe('0.00');
+    expect(html(data)).toContain('fee terms depend on your forwarder');
+  });
+
+  it('PVA: cash at the border excludes VAT, with the explanation', async () => {
+    const { data } = await submit({ vatRegistered: 'on', vatPostponed: 'on' });
+    const t = data.outcome?.quote.totals;
+    expect(t?.vatPostponed).toBe(true);
+    expect(t?.borderOutlay).toBe('0.00');
+    expect(t?.totalVat).toBe('439.21');
+    expect(html(data)).toContain(
+      'Import VAT £439.21 is accounted for on your VAT return, not paid at the border.',
+    );
+  });
+
+  it('PVA without VAT registration shows the warning (fails visibly)', async () => {
+    const { status, data } = await submit({ vatPostponed: 'on' });
+    expect(status).toBe(200);
+    expect(data.outcome?.quote.totals.vatPostponed).toBe(false);
+    expect(data.outcome?.quote.totals.borderOutlay).toBe('439.21');
+    const page = html(data);
+    expect(page).toContain('PVA_REQUIRES_VAT_REGISTRATION');
+    expect(page).toContain('Postponed VAT accounting is only open to VAT-registered businesses');
+    expect(page).not.toContain('accounted for on your VAT return, not paid at the border');
+  });
+
+  it('own DAN: requires the authorisation, shows the CDS reminder, never logs or returns the DAN', async () => {
+    const refused = await submit({ dutyPayment: 'OWN_DAN', dan: '7654321' });
+    expect(refused.status).toBe(400);
+    expect(refused.data.errors.danAuthorised).toMatch(/authorised your forwarder’s EORI/);
+
+    const badDan = await submit({ dutyPayment: 'OWN_DAN', dan: '76543', danAuthorised: 'on' });
+    expect(badDan.data.errors.dan).toMatch(/7 digits/);
+
+    const { status, data } = await submit({
+      dutyPayment: 'OWN_DAN',
+      dan: '7654321',
+      danAuthorised: 'on',
+    });
+    expect(status).toBe(200);
+    expect(data.outcome?.dutyPayment).toEqual({
+      method: 'OWN_DAN',
+      brokerFeeTerms: null,
+      danAuthorised: true,
+    });
+    expect(html(data)).toContain(DAN_REMINDER);
+    expect(JSON.stringify(data.outcome)).not.toContain('7654321');
+    expect(JSON.stringify(logLines)).not.toContain('7654321');
+    expect(
+      logLines.some((l) => l.event === 'calculator.completed' && l.dutyPayment === 'OWN_DAN'),
+    ).toBe(true);
   });
 });

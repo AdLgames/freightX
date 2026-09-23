@@ -171,17 +171,27 @@ export const failOpen = (inner: RateLimiter, onError: (err: unknown) => void): R
   },
 });
 
-export const createRateLimiter = async (
-  redisUrl: string | undefined,
+/**
+ * Magic-link requests (§7.1): 5 per hour per email address and 20 per hour per IP. The subjects
+ * are already hashed by the caller (sha256 of the lower-cased email / of the IP) and `bucketKey`
+ * hashes again, so neither ever reaches Redis or a log in clear.
+ */
+export const LOGIN_EMAIL_LIMIT: RateLimitPolicy = {
+  name: 'login-email',
+  capacity: 5,
+  windowMs: 60 * 60 * 1000,
+};
+export const LOGIN_IP_LIMIT: RateLimitPolicy = {
+  name: 'login-ip',
+  capacity: 20,
+  windowMs: 60 * 60 * 1000,
+};
+
+/** Build the limiter on the shared Redis connection (`redis.server.ts`), or in memory without one. */
+export const createRateLimiter = (
+  redis: RedisEvalClient | null,
   onError: (err: unknown) => void,
-): Promise<{ limiter: RateLimiter; backend: 'memory' | 'redis' }> => {
-  if (!redisUrl) return { limiter: new InMemoryRateLimiter(), backend: 'memory' };
-  const { default: Redis } = await import('ioredis');
-  const client = new Redis(redisUrl, {
-    lazyConnect: true,
-    maxRetriesPerRequest: 1,
-    enableOfflineQueue: false,
-  });
-  client.on('error', onError);
-  return { limiter: failOpen(new RedisRateLimiter(client), onError), backend: 'redis' };
+): { limiter: RateLimiter; backend: 'memory' | 'redis' } => {
+  if (!redis) return { limiter: new InMemoryRateLimiter(), backend: 'memory' };
+  return { limiter: failOpen(new RedisRateLimiter(redis), onError), backend: 'redis' };
 };

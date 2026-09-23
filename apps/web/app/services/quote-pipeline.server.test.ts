@@ -11,7 +11,12 @@ import {
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildCalculatorSchema, type CalculatorInput } from '../validators/calculator';
 import { DEFAULT_RATE_SHEET, SAMPLE_FX_CSV, adaptersFile } from './paths.server';
-import { resolveUnitVolumeCbm, runQuotePipeline, type PipelineDeps } from './quote-pipeline.server';
+import {
+  resolveBrokerFeeTerms,
+  resolveUnitVolumeCbm,
+  runQuotePipeline,
+  type PipelineDeps,
+} from './quote-pipeline.server';
 
 const NOW = new Date('2026-09-23T10:00:00Z');
 const fixture = (name: string): unknown => {
@@ -244,6 +249,164 @@ describe('runQuotePipeline', () => {
     expect(ok.quote.status).toBe('READY');
     expect(ok.quote.totals.freightCost).toBe('0.00');
     expect(ok.quote.totals.customsValue).toBe('1635.05'); // goods 1755.05 − UK leg 120
+  });
+});
+
+describe('engine 1.1 inputs: assists, broker deferment, PVA, inland VAT adjustment', () => {
+  const quoteOf = async (patch: Record<string, string>, override: Partial<PipelineDeps> = {}) => {
+    const out = await runQuotePipeline(parse(patch), {
+      ...deps(fakeTariffFetch().fetch),
+      ...override,
+    });
+    expect(out.kind).toBe('QUOTE');
+    if (out.kind !== 'QUOTE') throw new Error(`expected a quote, got ${out.kind}`);
+    return out;
+  };
+
+  it('adds a direct assist to the customs value, stays READY and warns ASSISTS_INCLUDED', async () => {
+    const out = await quoteOf({ assistsGbp: '1000' });
+    const q = out.quote;
+    expect(q.calcVersion).toBe('1.1');
+    expect(q.status).toBe('READY');
+    expect(q.totals.assistsGbp).toBe('1000.00');
+    expect(q.lines[0]?.assistsGbp).toBe('1000.00');
+    expect(q.totals.customsValue).toBe('2847.05'); // 1847.05 + 1000
+    expect(q.totals.totalVat).toBe('639.21'); // (2847.05 + 150 + 199) × 20%
+    expect(q.totals.totalLandedCostExVat).toBe('3196.05'); // 2196.05 + 1000
+    expect(q.warnings.map((w) => w.code)).toContain('ASSISTS_INCLUDED');
+    expect(out.assists).toEqual({ method: 'DIRECT', amountGbp: '1000.00' });
+  });
+
+  it('apportions an assist with the helper (500 of 2,000 lifetime units of a £1,000 mould)', async () => {
+    const out = await quoteOf({ assistTotalCostGbp: '1000', assistTotalUnits: '2000' });
+    expect(out.assists).toMatchObject({ method: 'HELPER', amountGbp: '250.00' });
+    expect(out.quote.totals.customsValue).toBe('2097.05');
+    expect(out.stages[0]?.note).toContain('£1000.00 × 500 ÷ 2000 units = £250.00');
+  });
+
+  it('charges the broker deferment minimum when the percentage is lower (2.5% / £25)', async () => {
+    const out = await quoteOf({ brokerFeePct: '2.5', brokerMinimumGbp: '25' });
+    const t = out.quote.totals;
+    expect(t.borderOutlay).toBe('439.21'); // duty 0 + VAT 439.21
+    expect(t.financingFee).toBe('25.00'); // 2.5% = 10.98 < £25 minimum
+    expect(out.quote.lines[0]?.allocatedFinancingFeeGbp).toBe('25.00');
+    expect(t.totalLandedCostExVat).toBe('2221.05'); // 2196.05 + 25
+    expect(out.quote.status).toBe('READY');
+    expect(out.quote.warnings.map((w) => w.code)).toContain('BROKER_DEFERMENT_FEE');
+    expect(out.dutyPayment).toEqual({
+      method: 'BROKER_DEFERMENT',
+      brokerFeeTerms: { feePct: '2.5', minimumGbp: '25', usedDefaults: false },
+      danAuthorised: false,
+    });
+  });
+
+  it('charges the percentage when it exceeds the minimum (5% / £10)', async () => {
+    const out = await quoteOf({ brokerFeePct: '5', brokerMinimumGbp: '10' });
+    expect(out.quote.totals.financingFee).toBe('21.96'); // 439.21 × 5%
+  });
+
+  it('includes no deferment fee when no terms are entered or configured', async () => {
+    const out = await quoteOf({});
+    expect(out.dutyPayment.brokerFeeTerms).toBeNull();
+    expect(out.quote.totals.financingFee).toBe('0.00');
+    expect(out.quote.warnings.map((w) => w.code)).not.toContain('BROKER_DEFERMENT_FEE');
+  });
+
+  it('falls back to configured default terms, filling a missing half with 0', async () => {
+    const pricing = {
+      brokerDefermentDefaults: { feePct: '2.5', minimumGbp: null },
+      inlandVatAdjustmentGbp: {},
+    };
+    const out = await quoteOf({}, { pricing });
+    expect(out.dutyPayment.brokerFeeTerms).toEqual({
+      feePct: '2.5',
+      minimumGbp: '0',
+      usedDefaults: true,
+    });
+    expect(out.quote.totals.financingFee).toBe('10.98');
+    expect(
+      resolveBrokerFeeTerms({ brokerFeePct: '3', brokerMinimumGbp: undefined }, pricing),
+    ).toEqual({
+      feePct: '3',
+      minimumGbp: '0',
+      usedDefaults: false,
+    });
+  });
+
+  it('ignores fee terms when duty is paid from the importer’s own accounts', async () => {
+    for (const dutyPayment of ['CDS_CASH', 'OWN_DAN']) {
+      const out = await quoteOf({
+        dutyPayment,
+        brokerFeePct: '2.5',
+        brokerMinimumGbp: '25',
+        dan: '1234567',
+        danAuthorised: 'on',
+      });
+      expect(out.quote.totals.financingFee, dutyPayment).toBe('0.00');
+      expect(out.dutyPayment.brokerFeeTerms).toBeNull();
+      expect(out.dutyPayment.danAuthorised).toBe(dutyPayment === 'OWN_DAN');
+      expect(JSON.stringify(out)).not.toContain('1234567');
+    }
+  });
+
+  it('PVA: border cash excludes VAT; the cost is unchanged; no fee on a zero outlay', async () => {
+    const out = await quoteOf({
+      vatRegistered: 'on',
+      vatPostponed: 'on',
+      brokerFeePct: '2.5',
+      brokerMinimumGbp: '25',
+    });
+    const t = out.quote.totals;
+    expect(t.vatPostponed).toBe(true);
+    expect(t.totalVat).toBe('439.21');
+    expect(t.borderOutlay).toBe('0.00'); // duty 0; VAT on the VAT return
+    expect(t.financingFee).toBe('0.00');
+    expect(t.totalLandedCostExVat).toBe('2196.05');
+    expect(out.quote.warnings.map((w) => w.code)).not.toContain('PVA_REQUIRES_VAT_REGISTRATION');
+  });
+
+  it('PVA without VAT registration warns and keeps VAT at the border', async () => {
+    const out = await quoteOf({ vatPostponed: 'on' });
+    const t = out.quote.totals;
+    expect(t.vatPostponed).toBe(false);
+    expect(t.borderOutlay).toBe('439.21');
+    expect(out.quote.status).toBe('READY'); // non-blocking
+    const w = out.quote.warnings.find((x) => x.code === 'PVA_REQUIRES_VAT_REGISTRATION');
+    expect(w).toMatchObject({ blocking: false });
+  });
+
+  it('applies the configured inland VAT adjustment only when the UK leg is unknown', async () => {
+    const pricing = {
+      brokerDefermentDefaults: { feePct: null, minimumGbp: null },
+      inlandVatAdjustmentGbp: { SEA_LCL: '170' },
+    };
+    // The rate sheet gives the UK leg, so the adjustment does not apply.
+    const withLeg = await quoteOf({}, { pricing });
+    expect(withLeg.quote.totals.inlandVatAdjustment).toBe('0.00');
+    expect(withLeg.quote.totals.totalVat).toBe('439.21');
+
+    // A provider that does not split the UK leg: £170 goes into the VAT base only.
+    const noSplit: PipelineDeps['freight'] = {
+      name: 'no-split',
+      quote: async (req) => {
+        const res = await freight.quote(req);
+        return res.ok
+          ? {
+              ...res,
+              quote: { ...res.quote, freight: { ...res.quote.freight, postBorderGbp: null } },
+            }
+          : res;
+      },
+    };
+    const out = await quoteOf({}, { pricing, freight: noSplit });
+    const t = out.quote.totals;
+    expect(t.inlandVatAdjustment).toBe('170.00');
+    expect(t.freightPostBorderGbp).toBe('0.00');
+    expect(t.totalVat).toBe('443.21'); // (1847.05 + 0 + 199 + 170) × 20%
+    expect(t.totalLandedCostExVat).toBe('2046.05'); // adjustment is not a cost
+    expect(out.quote.warnings.map((w) => w.code)).toEqual(
+      expect.arrayContaining(['INLAND_VAT_ADJUSTMENT', 'FREIGHT_SPLIT_ASSUMED']),
+    );
   });
 });
 
