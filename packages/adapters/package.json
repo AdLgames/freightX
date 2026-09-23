@@ -10,11 +10,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./rate-sheets/v1.json": "./rate-sheets/v1.json",
+    "./fixtures/fx/hmrc-monthly-sample.csv": "./fixtures/fx/hmrc-monthly-sample.csv"
   },
   "files": [
     "dist",
-    "rate-sheets"
+    "rate-sheets",
+    "fixtures"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

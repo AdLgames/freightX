@@ -1,8 +1,9 @@
-import { RateSheetFreightProvider, loadRateSheet } from '@harbour/adapters';
+import { RateSheetFreightProvider, loadRateSheet, rateSheetSchema } from '@harbour/adapters';
+// Bundled at build time so serverless deployments (Vercel) never depend on runtime file paths.
+import bundledRateSheet from '@harbour/adapters/rate-sheets/v1.json';
 import { modeName, portName } from '../data/ports';
 import { CALCULATOR_MODES, laneKey, type CalculatorMode } from '../validators/calculator';
 import type { Logger } from './logger.server';
-import { DEFAULT_RATE_SHEET, adaptersFile } from './paths.server';
 
 export interface RateSheetMeta {
   version: string;
@@ -29,13 +30,11 @@ export const loadFreightProvider = (opts: {
   logger: Logger;
   now?: () => Date;
 }): { provider: RateSheetFreightProvider; meta: RateSheetMeta; lanes: LaneOption[] } => {
-  const path = opts.rateSheetPath ?? adaptersFile(...DEFAULT_RATE_SHEET);
-  if (!path) {
-    throw new Error(
-      'Rate sheet not found: set RATE_SHEET_PATH or build @harbour/adapters (rate-sheets/v1.json).',
-    );
-  }
-  const sheet = loadRateSheet(path);
+  // RATE_SHEET_PATH overrides the bundled sheet (self-hosting, or trialling a new sheet).
+  const path = opts.rateSheetPath ?? 'bundled:@harbour/adapters/rate-sheets/v1.json';
+  const sheet = opts.rateSheetPath
+    ? loadRateSheet(opts.rateSheetPath)
+    : rateSheetSchema.parse(bundledRateSheet);
   const provider = new RateSheetFreightProvider(sheet, opts.now);
   const meta: RateSheetMeta = {
     version: sheet.version,

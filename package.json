@@ -5,7 +5,7 @@
   "description": "Landed-cost & import workspace for UK micro-importers (working name: Harbour)",
   "packageManager": "pnpm@10.33.0",
   "engines": {
-    "node": ">=22 <23"
+    "node": "22.x"
   },
   "scripts": {
     "build": "pnpm -r --filter './packages/**' run build && pnpm --filter @harbour/web run build",
