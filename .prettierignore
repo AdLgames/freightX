@@ -6,3 +6,4 @@ pnpm-lock.yaml
 packages/db/generated
 packages/db/prisma/migrations
 docs/engineering-brief.md
+.claude

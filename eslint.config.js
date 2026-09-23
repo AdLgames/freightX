@@ -53,6 +53,7 @@ const noNumberMoney = {
 export default tseslint.config(
   {
     ignores: [
+      '.claude/**',
       '**/dist/**',
       '**/build/**',
       '**/.react-router/**',
