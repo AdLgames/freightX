@@ -1,3 +1,4 @@
+import { storageEnvSchema } from '@harbour/adapters'; // M5
 import { z } from 'zod';
 import { decimalString } from '../validators/common';
 import type { CalculatorMode } from '../validators/calculator';
@@ -87,6 +88,9 @@ const envSchema = z
       .regex(/^price_[A-Za-z0-9]+$/, 'STRIPE_PRICE_PRO must be a Stripe price id (price_…).')
       .optional(),
     // end M6
+    // M5: document vault — object storage (STORAGE_*: S3/R2, or a local directory outside
+    // production) and the ClamAV daemon (CLAMD_*). Schema shared with the worker via @harbour/adapters.
+    ...storageEnvSchema.shape,
   })
   .refine(
     (e) => (e.TRADE_TARIFF_API_KEY === undefined) === (e.TRADE_TARIFF_API_KEY_HEADER === undefined),
@@ -129,6 +133,17 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     STRIPE_PRICE_STARTER: blank(source.STRIPE_PRICE_STARTER),
     STRIPE_PRICE_PRO: blank(source.STRIPE_PRICE_PRO),
     // end M6
+    // M5 (storageEnvSchema blanks its own values)
+    STORAGE_ENDPOINT: source.STORAGE_ENDPOINT,
+    STORAGE_REGION: source.STORAGE_REGION,
+    STORAGE_BUCKET: source.STORAGE_BUCKET,
+    STORAGE_ACCESS_KEY_ID: source.STORAGE_ACCESS_KEY_ID,
+    STORAGE_SECRET_ACCESS_KEY: source.STORAGE_SECRET_ACCESS_KEY,
+    STORAGE_FORCE_PATH_STYLE: source.STORAGE_FORCE_PATH_STYLE,
+    STORAGE_LOCAL_DIR: source.STORAGE_LOCAL_DIR,
+    STORAGE_LOCAL_SECRET: source.STORAGE_LOCAL_SECRET,
+    CLAMD_HOST: source.CLAMD_HOST,
+    CLAMD_PORT: source.CLAMD_PORT,
   });
   return {
     ...parsed,

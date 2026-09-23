@@ -65,6 +65,11 @@ describe('scheduleRepeatables', () => {
 
   it('every queue has at least one schedule with a stable, queue-prefixed id', () => {
     for (const name of QUEUE_NAMES) {
+      // M5: document-scan is on demand (enqueued per upload by the web app), never repeatable.
+      if (name === 'document-scan') {
+        expect(SCHEDULES[name]).toEqual([]);
+        continue;
+      }
       expect(SCHEDULES[name].length).toBeGreaterThan(0);
       for (const s of SCHEDULES[name]) expect(s.id.startsWith(`${name}:`)).toBe(true);
     }

@@ -25,6 +25,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1138.0",
+    "@aws-sdk/s3-request-presigner": "^3.1138.0",
     "@harbour/engine": "workspace:*",
     "decimal.js": "^10.6.0",
     "opossum": "^10.0.0",

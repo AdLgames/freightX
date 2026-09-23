@@ -11,10 +11,12 @@ prisma/migrations/0002_rls_and_guards        hand-written: role, RLS policies, t
 prisma/migrations/0003_customs_profile_and_quote_1_1
                                              generated DDL + hand-written CHECKs/trigger/RLS
 prisma/migrations/0004_auth_sessions         generated: index on magic_link_tokens(expires_at)
+prisma/migrations/0005_documents_quote_link  M5: generated DDL (quote link, scope, scan columns) + hand-written CHECKs
 src/client.ts     createPrismaClient()       one pool per process
 src/tenancy.ts    forOrganization(), withOrgTransaction(), scopeArgs()
 src/rbac.ts       can(role, action), assertCan()
 src/audit.ts      recordAudit(tx, entry)
+src/documents.ts  PrismaDocumentScanStore (M5: the scan pipeline's persistence seam)
 src/stores.ts     PrismaTariffCacheStore, PrismaFxRateStore, PrismaEmailSignupRepository
 generated/        Prisma client output — gitignored, run `pnpm generate`
 ```
@@ -62,6 +64,16 @@ prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-u
   type, received/processed timestamps, last error, payload sha256 — never the payload). `StripeEvent`
   is a `PASSTHROUGH_MODELS` entry (no organisation until processed, no RLS), granted to `harbour_app`.
   `billing_email` is PII like the EORI: never logged, never in audit metadata. Independent of 0005.
+- `0005_documents_quote_link` (M5) = generated DDL (`prisma migrate diff --from-migrations … --shadow-database-url <shadow> --script`,
+  edited only to add `scope` with a temporary default + backfill) + hand-written, idempotent CHECKs.
+  Adds `Document.quoteId` (composite FK `(quote_id, organization_id) → quotes`, `ON DELETE RESTRICT`),
+  `scope` (`document_scope`: `SHIPMENT | QUOTE | ORGANISATION`, must agree with which of
+  `shipment_id`/`quote_id` is set), the scan columns `scan_engine` (`clamav` | `none`), `scan_result`,
+  `scanned_at`, `rejected_reason` (set iff status is `REJECTED`), soft-delete `deleted_at`, index
+  `(organization_id, quote_id)`, `document_type` values `EORI_CONFIRMATION`, `VAT_CERTIFICATE`,
+  `REPRESENTATION_AUTHORITY` (additive), and CHECKs: `size_bytes ≤ 26214400` (§7.4), `version ≥ 1`,
+  and `CLEAN`/`VERIFIED` only with `scan_engine = 'clamav'` (no scanner → the row stays `UPLOADED`).
+  Rollback note is in the migration header (additive: re-deploy the previous release).
 - **Shadow database (fixed).** 0002's `REVOKE ... "_prisma_migrations"` is guarded with
   `to_regclass`, so `migrate dev` and `migrate diff --from-migrations` can replay all migrations
   into a shadow database. The guard was added before any non-throwaway database applied 0002.
@@ -275,7 +287,7 @@ or `/append-only|permission denied/`.
 
 ## Tests
 
-- `test/rbac.test.ts` — every cell of the §7.2 matrix.
+- `test/rbac.test.ts` — every cell of the §7.2 matrix (+ M5 `doc.verify`: OWNER/ADMIN).
 - `test/tenancy.test.ts` — `scopeArgs` rewriting, no database.
 - `test/migrations.test.ts` — migration files present, every tenant table has RLS + policy +
   `@@map`, every schema model is classified, triggers present.

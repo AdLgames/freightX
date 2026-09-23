@@ -57,6 +57,9 @@ export {
 } from './stores.js';
 export type { PrismaTariffCacheStoreOptions, EmailSignupInput } from './stores.js';
 
+// M5: document vault
+export { PrismaDocumentScanStore, DOCUMENT_SCAN_AUDIT_ACTION } from './documents.js';
+
 // Generated client re-exports. `PrismaClient` is exported as a type only: construct instances via
 // createPrismaClient() so there is one pool per process. `Role` (the Prisma enum) is exported as
 // PrismaRole because the RBAC `Role` union above carries the same values.
@@ -69,6 +72,7 @@ export {
   ShipmentStatus,
   DocumentType,
   DocumentStatus,
+  DocumentScope, // M5
   PaymentMethod,
   Role as PrismaRole,
   // M6

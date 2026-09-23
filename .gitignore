@@ -16,3 +16,5 @@ packages/db/generated/
 
 # Agent worktrees (temporary, local only)
 .claude/worktrees/
+# M5: local document storage (development only)
+.data/

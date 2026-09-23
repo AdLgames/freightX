@@ -19,6 +19,8 @@ export const ACTIONS = [
   // M3: products, suppliers, pickup locations, payment terms (same roles as quote.edit; the
   // brief's matrix has no catalogue row, so this mirrors "create/edit quotes")
   'catalogue.edit',
+  // M5: document vault
+  'doc.verify', // mark a scanned document as checked by a person (OWNER/ADMIN)
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -37,6 +39,8 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   'billing.manage': { OWNER: true, ADMIN: false, MEMBER: false, VIEWER: false },
   'member.manage': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'catalogue.edit': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false }, // M3
+  // M5: document vault (verification is an admin act, like accepting a quote)
+  'doc.verify': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
 };
 
 export class ForbiddenError extends Error {

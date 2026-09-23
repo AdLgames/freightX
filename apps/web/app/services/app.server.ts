@@ -19,6 +19,7 @@ import { createAuthServices, type AuthServices } from './workspace.server';
 // M6
 import { createBillingServices, type BillingServices } from './billing/billing.server';
 // end M6
+import { createDocumentServices, type DocumentServices } from './documents/storage.server'; // M5
 
 /**
  * Composition root. Built once per process (memoised on `globalThis` so `react-router dev`
@@ -46,6 +47,8 @@ export interface AppServices {
   // M6: Stripe Billing (gateway, webhook queue, plan prices). See billing/billing.server.ts.
   billing: BillingServices;
   // end M6
+  /** M5: object storage, malware scanner and scan-job enqueuer for the document vault. */
+  documents: DocumentServices;
 }
 
 export interface AppOverrides {
@@ -102,6 +105,8 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     now,
   });
   // end M6
+  // M5
+  const documents = createDocumentServices({ env, logger, redis, prisma: auth.prisma });
 
   logger.info('app.started', {
     nodeEnv: env.NODE_ENV,
@@ -138,6 +143,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     // M6
     billing,
     // end M6
+    documents, // M5
   };
 };
 

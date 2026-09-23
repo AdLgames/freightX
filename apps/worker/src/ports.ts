@@ -83,8 +83,10 @@ export type AlertCode =
   | 'TARIFF_REFRESH_DEGRADED'
   | 'JOB_FAILED'
   // M6: a Stripe webhook event exhausted its attempts (dead-letter, brief §6.4).
-  | 'STRIPE_EVENT_DEAD_LETTERED';
-// end M6
+  | 'STRIPE_EVENT_DEAD_LETTERED'
+  // end M6
+  // M5: document-scan job — a scanner rejected an upload (warning; the object is already deleted)
+  | 'DOCUMENT_MALWARE_FOUND';
 
 export interface AlertSink {
   alert(

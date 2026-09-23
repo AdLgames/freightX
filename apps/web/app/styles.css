@@ -1694,3 +1694,123 @@ fieldset.readonly .form-actions {
 .draft-row:hover .draft-cta {
   color: var(--cyan-700);
 }
+
+/* ---------- documents (M5) ---------- */
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.tabs ul {
+  display: flex;
+  gap: 4px;
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.tabs a {
+  display: inline-block;
+  padding: 8px 12px;
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tabs a[aria-current='page'] {
+  border-bottom-color: var(--ink);
+  font-weight: 700;
+}
+
+.tab-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--amber);
+  color: #fff;
+  font-size: 0.8em;
+  font-weight: 700;
+}
+
+.missing-files {
+  list-style: none;
+  padding: 0;
+}
+
+.missing-files li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-table td.doc-name {
+  word-break: break-word;
+  max-width: 24ch;
+}
+
+.doc-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.doc-status .hint {
+  margin: 0;
+}
+
+.status-pill.doc-neutral {
+  background: #6b7280;
+}
+
+.status-pill.doc-pending {
+  background: var(--amber);
+}
+
+.status-pill.doc-ok {
+  background: var(--green);
+}
+
+.status-pill.doc-bad {
+  background: #b91c1c;
+}
+
+.doc-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.doc-actions form {
+  display: inline;
+}
+
+.quote-group {
+  margin-bottom: 32px;
+}
+
+.upload-status {
+  min-height: 1.5em;
+}
+
+[data-quote-field][hidden] {
+  display: none;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
