@@ -54,7 +54,7 @@ expected import month** (§5.7), not the rate at which the deposit was paid. Cus
 follows §5.3, not a plain CIF sum, and tariff data comes from the 24-hour cache rather than a
 live call on every quote.
 
-### `CostActual` (M8)
+### `CostActual` (M8) — superseded by ADR-0014
 
 One row per actual invoice line: `category` enum (`GOODS`, `FREIGHT`, `ORIGIN_FEES`,
 `DESTINATION_FEES`, `DUTY`, `IMPORT_VAT`, `DEFERMENT_FEE`, `INSURANCE`, `OTHER`), amount,
