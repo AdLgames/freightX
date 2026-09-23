@@ -4,12 +4,16 @@
   "private": true,
   "description": "Harbour web app: Phase 0 public landed-cost calculator (React Router 7 framework mode)",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "react-router dev",
     "build": "react-router build",
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "vercel-build": "pnpm --filter @harbour/engine --filter @harbour/adapters run build && react-router build"
   },
   "dependencies": {
     "@harbour/adapters": "workspace:*",
@@ -22,7 +26,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router": "~7.18.4",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@vercel/react-router": "^1.3.6"
   },
   "devDependencies": {
     "@react-router/dev": "~7.18.4",

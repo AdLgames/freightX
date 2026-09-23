@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { parseHmrcMonthlyCsv, type FxRateRecord, type FxRateStore } from '@harbour/adapters';
 import type { Logger } from './logger.server';
-import { SAMPLE_FX_CSV, adaptersFile } from './paths.server';
+// Bundled at build time (Vite `?raw`) so the sample is present in serverless bundles.
+import sampleFxCsv from '@harbour/adapters/fixtures/fx/hmrc-monthly-sample.csv?raw';
 
 /**
  * Seed the FX store at startup (§5.7: rates are never fetched in the request path). In
@@ -56,15 +57,8 @@ export const seedFxStore = async (opts: {
     };
   }
 
-  const samplePath = adaptersFile(...SAMPLE_FX_CSV);
-  if (!samplePath) {
-    logger.error('fx.unseeded', {
-      message:
-        'No FX_SEED_CSV and the sample CSV could not be found: every non-GBP quote will need a manual rate.',
-    });
-    return { source: 'none', path: null, count: 0, skipped: 0 };
-  }
-  const parsed = parseHmrcMonthlyCsv(readFileSync(samplePath, 'utf8'));
+  const samplePath = 'bundled:@harbour/adapters/fixtures/fx/hmrc-monthly-sample.csv';
+  const parsed = parseHmrcMonthlyCsv(sampleFxCsv);
   let records = parsed.records;
   if (!coversNow(records, now())) {
     // Sample data is only for wiring checks; keep it usable in dev by re-stamping to this month.

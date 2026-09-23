@@ -107,3 +107,23 @@ shares a single bucket. The IP is hashed before it becomes a bucket key and is n
 - Stripe Billing subscription and plan gating.
 - Worker (`apps/worker`): HMRC/ECB FX jobs, tariff cache refresh, quote expiry.
 - SeaRates behind `ResilientFreightProvider` with the rate sheet as fallback and outlier checks.
+
+## Deploying to Vercel
+
+Vercel project settings:
+
+- **Root Directory:** `apps/web`. Keep "Include files outside the root directory" enabled, which
+  is the default, so the pnpm workspace installs.
+- **Node.js version:** 22.x. `engines.node` is `22.x`, and Vercel follows it.
+- Everything else comes from `apps/web/vercel.json`: the React Router framework preset, the
+  `vercel-build` command that builds the engine and adapters first, and the London region
+  (`lhr1`, for UK hosting per brief §10).
+
+`react-router.config.ts` enables `@vercel/react-router`'s preset only when `VERCEL` is set, so
+local dev and `react-router-serve` hosting are unchanged. The default rate sheet and sample FX
+CSV are bundled into the server build, so no runtime file paths are needed. `RATE_SHEET_PATH` and
+`FX_SEED_CSV` still override them where a filesystem is available.
+
+Serverless caveat: the in-memory rate limiter and stores are per function instance. Set
+`REDIS_URL` so the 20-calculations-per-hour limit holds across instances, and set the Turnstile
+keys before any public traffic.
