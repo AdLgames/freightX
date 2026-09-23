@@ -37,6 +37,14 @@ import {
   type WorkerPorts,
 } from './ports.js';
 import type { QueueName } from './queues.js';
+// M6
+import {
+  UnconfiguredStripeEventHandler,
+  runStripeEventJob,
+  type StripeEventHandlerPort,
+  type StripeEventSummary,
+} from './jobs/stripe-events.js';
+// end M6
 
 const csvList = z
   .string()
@@ -54,6 +62,10 @@ export const envSchema = z.object({
   WORKER_PORT: z.coerce.number().int().min(0).max(65535).default(9090),
   TARIFF_REFRESH_CODES: csvList,
   UK_TRADE_TARIFF_BASE_URL: z.url().optional(),
+  // M6: who consumes the `stripe-events` queue. Unset/`web` → the web app (default today);
+  // `worker` → this process, which needs a database-backed StripeEventHandlerPort (TODO(db)).
+  STRIPE_EVENTS_CONSUMER: z.enum(['web', 'worker']).default('web'),
+  // end M6
 });
 export type WorkerEnv = z.infer<typeof envSchema>;
 
@@ -70,6 +82,10 @@ export interface Wiring {
   ports: WorkerPorts;
   tariffCache: TariffCacheStore;
   runJob: (queue: QueueName) => Promise<JobSummary>;
+  // M6
+  stripeEvents: StripeEventHandlerPort;
+  runStripeEvent: (data: unknown) => Promise<StripeEventSummary>;
+  // end M6
 }
 
 export type JobSummary = FxRefreshSummary | TariffRefreshSummary | QuoteExpirySummary;
@@ -112,5 +128,11 @@ export const buildWiring = (
     }
   };
 
-  return { ports, tariffCache, runJob };
+  // M6: TODO(db) replace with a Prisma-backed handler (apps/web billing/events.server.ts logic).
+  const stripeEvents: StripeEventHandlerPort = new UnconfiguredStripeEventHandler();
+  const runStripeEvent = (data: unknown): Promise<StripeEventSummary> =>
+    runStripeEventJob(data, { handler: stripeEvents });
+  // end M6
+
+  return { ports, tariffCache, runJob, stripeEvents, runStripeEvent };
 };

@@ -49,6 +49,9 @@ export const PASSTHROUGH_MODELS = [
   'TariffCache',
   'MagicLinkToken',
   'EmailSignup',
+  // M6: Stripe webhook idempotency rows (no organisation until processed; no RLS).
+  'StripeEvent',
+  // end M6
 ] as const;
 export type PassthroughModel = (typeof PASSTHROUGH_MODELS)[number];
 

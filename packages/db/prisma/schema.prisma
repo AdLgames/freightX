@@ -37,6 +37,17 @@ model Organization {
   baseCurrency     String    @default("GBP") @map("base_currency")
   plan             Plan      @default(FREE)
   stripeCustomerId String?   @unique @map("stripe_customer_id")
+  // M6 (NEW vs brief) Stripe Billing subscription state, written only by the webhook processor
+  // (apps/web billing/events.server.ts). `plan` above is the EFFECTIVE plan; `subscriptionStatus`
+  // is the Stripe status mapped to our enum. `billingEmail` is PII (§7.3): stored lower-cased,
+  // never logged, never in audit metadata.
+  stripeSubscriptionId String?            @unique @map("stripe_subscription_id")
+  subscriptionStatus   SubscriptionStatus @default(NONE) @map("subscription_status")
+  currentPeriodEnd     DateTime?          @map("current_period_end")
+  cancelAtPeriodEnd    Boolean            @default(false) @map("cancel_at_period_end")
+  billingEmail         String?            @map("billing_email")
+  planUpdatedAt        DateTime?          @map("plan_updated_at")
+  // end M6
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at") // soft delete
@@ -102,6 +113,22 @@ enum Plan {
 
   @@map("plan")
 }
+
+// M6 (NEW vs brief) Stripe subscription status mapped to our vocabulary (billing/events.server.ts
+// owns the mapping). NONE = never subscribed. Additive only (§4 migration rules).
+enum SubscriptionStatus {
+  NONE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  INCOMPLETE
+  PAUSED
+
+  @@map("subscription_status")
+}
+// end M6
 
 // (NEW vs brief) How import duty/VAT is paid at the border. Additive only (§4 migration rules):
 // append new values, never rename or remove one — quotes snapshot this value.
@@ -179,6 +206,25 @@ model EmailSignup {
 
   @@map("email_signups")
 }
+
+// M6 (NEW vs brief) Stripe webhook idempotency (§6.4 "duplicates are no-ops"). One row per Stripe
+// event id, inserted by POST /webhooks/stripe before the event is queued; a second delivery of the
+// same id is a no-op. NOT tenant-scoped (the organisation is only known after processing) and never
+// holds the payload — only its sha256 — so nothing here is PII. `processedAt` is set when the
+// processor finished (applied or ignored); `error` holds the last processing failure.
+model StripeEvent {
+  id            String    @id // Stripe event id, "evt_..."
+  type          String // e.g. "customer.subscription.updated"
+  receivedAt    DateTime  @default(now()) @map("received_at")
+  processedAt   DateTime? @map("processed_at")
+  error         String?
+  payloadSha256 String    @map("payload_sha256")
+
+  @@index([processedAt, receivedAt]) // ops: unprocessed / failed events
+  @@map("stripe_events")
+}
+
+// end M6
 
 // ---------- Catalogue ----------
 

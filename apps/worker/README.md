@@ -12,6 +12,22 @@ writers of `FxRate` and the nightly re-warmers of `TariffCache`.
 | `tariff-refresh` | Re-warms the tariff cache for every active commodity code through `UkTradeTariffClient` (≤ 5 concurrent, 100 ms between starts). Entries older than an hour are refetched (`refreshingCacheView`). Summarises ok / notFound / unavailable; raises **warning `TARIFF_REFRESH_DEGRADED`** if more than 20 % of codes were unavailable.                                                                                                                                                 | `0 2 * * *` nightly                           |
 | `quote-expiry`   | Calls `QuoteExpiryPort.expireQuotesPastValidUntil(now)`: moves `READY`, `INDICATIVE` and `DRAFT` quotes past `validUntil` to `EXPIRED`. **Never touches `ACCEPTED`** (immutable, §5.9) nor `CANCELLED`/`EXPIRED` rows. Returns the count.                                                                                                                                                                                                                                            | `0 * * * *` hourly (§5.8)                     |
 
+### Event-driven: `stripe-events` (M6)
+
+Not in the table above because it has no schedule: `POST /webhooks/stripe` in the web app verifies
+the Stripe signature, records the event id in `stripe_events` (duplicates are dropped there) and
+enqueues `{ eventId, type, payload }` with `jobId = eventId`, `attempts: 5`, exponential backoff
+from 30 s and **failed jobs kept** (the dead-letter set of brief §6.4). The job contract lives in
+`src/jobs/stripe-events.ts` and must stay identical to
+`apps/web/app/services/billing/queue.server.ts`.
+
+Who consumes it: **the web app itself** by default (it has Prisma and the email transport). Set
+`STRIPE_EVENTS_CONSUMER=worker` to make this process consume instead — today that fails every job
+loudly (`UnconfiguredStripeEventHandler`) and raises **critical `STRIPE_EVENT_DEAD_LETTERED`** after
+the 5th attempt, because the worker has no database yet (same `TODO(db)` as the other ports). Wire
+a Prisma-backed `StripeEventHandlerPort` (the logic is `apps/web/app/services/billing/events.server.ts`)
+before flipping it. Without `REDIS_URL` the web app processes events inline and says so in its log.
+
 Job options on every scheduler: `attempts: 5`, exponential backoff from 30 s, `removeOnComplete: 100`,
 `removeOnFail: 500`. Schedulers are registered with `Queue.upsertJobScheduler` on every boot under
 stable ids (`fx-refresh:daily`, `fx-refresh:hmrc-publication`, `tariff-refresh:nightly`,
@@ -40,6 +56,7 @@ The FX schedule is deliberately simple: the job logic decides what is due (which
 | `WORKER_PORT`              | no (default `9090`)   | Port for `GET /healthz`, which returns `{ ok, startedAt, queues: [{ name, lastRun }] }` with the last completed/failed run per queue.                                                                   |
 | `TARIFF_REFRESH_CODES`     | no                    | Phase 0: comma-separated 10-digit commodity codes to re-warm nightly. Phase 1 replaces this with every `Product.hsCode` in the DB (see `wiring.server.ts`).                                             |
 | `UK_TRADE_TARIFF_BASE_URL` | no                    | Override the UK Trade Tariff API base URL (tests, recorded fixtures).                                                                                                                                   |
+| `STRIPE_EVENTS_CONSUMER`   | no (default `web`)    | M6: `worker` starts a consumer for the `stripe-events` queue in this process (needs a database-backed handler, not wired yet); `web` leaves it to the web app.                                          |
 
 Alerts always go to stdout as structured JSON (`{"event":"alert",...}`) in addition to the webhook.
 

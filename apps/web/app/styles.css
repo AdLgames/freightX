@@ -610,3 +610,37 @@ pre.stack {
     background: var(--panel);
   }
 }
+
+/* M6: billing page and plan notice */
+.plan-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.plan-card {
+  flex: 1 1 14rem;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.plan-card h3 {
+  margin-top: 0;
+}
+
+.plan-price {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.billing-actions {
+  margin: 1rem 0 2rem;
+}
+
+.plan-notice p {
+  margin: 0;
+}
+/* end M6 */

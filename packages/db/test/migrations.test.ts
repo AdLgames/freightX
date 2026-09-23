@@ -248,3 +248,52 @@ describe('0003_customs_profile_and_quote_1_1', () => {
     expect(handWritten).not.toMatch(/CREATE FUNCTION/); // only CREATE OR REPLACE
   });
 });
+
+// M6
+describe('0006_billing', () => {
+  const sql = readMigration('0006_billing');
+  const [, handWritten = ''] = sql.split('Part 2 — hand-written');
+
+  it('adds the subscription_status enum, the organisation columns and stripe_events additively', () => {
+    expect(sql).toContain(
+      `CREATE TYPE "subscription_status" AS ENUM ('NONE', 'TRIALING', 'ACTIVE', 'PAST_DUE', 'CANCELED', 'UNPAID', 'INCOMPLETE', 'PAUSED');`,
+    );
+    expect(sql).toContain(`"subscription_status" "subscription_status" NOT NULL DEFAULT 'NONE'`);
+    expect(sql).toContain('"cancel_at_period_end" BOOLEAN NOT NULL DEFAULT false');
+    for (const col of [
+      'billing_email',
+      'current_period_end',
+      'plan_updated_at',
+      'stripe_subscription_id',
+    ]) {
+      expect(sql).toMatch(new RegExp(`ADD COLUMN\\s+"${col}"`));
+    }
+    expect(sql).toContain('CREATE TABLE "stripe_events"');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "organizations_stripe_subscription_id_key" ON "organizations"("stripe_subscription_id");',
+    );
+    const statements = sql.replace(/--[^\n]*/g, '');
+    expect(statements).not.toMatch(/\bDROP (COLUMN|TABLE|TYPE)\b/);
+    expect(statements).not.toMatch(/\bRENAME\b|ALTER COLUMN/);
+  });
+
+  it('stripe_events is a pass-through table: no RLS, granted to harbour_app; billing_email lower-cased', () => {
+    expect(PASSTHROUGH_MODELS).toContain('StripeEvent');
+    expect(sql).not.toContain('ALTER TABLE "stripe_events" ENABLE ROW LEVEL SECURITY');
+    expect(handWritten).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "stripe_events" TO harbour_app;',
+    );
+    expect(handWritten).toContain(
+      'CHECK (billing_email IS NULL OR billing_email = lower(billing_email))',
+    );
+    for (const m of handWritten.matchAll(/ADD CONSTRAINT (\w+)/g)) {
+      expect(handWritten).toContain(`DROP CONSTRAINT IF EXISTS ${m[1]};`);
+    }
+  });
+
+  it('carries the rollback note', () => {
+    expect(sql).toMatch(/## Rollback/);
+    expect(sql).toMatch(/Reversible: yes/);
+  });
+});
+// end M6
