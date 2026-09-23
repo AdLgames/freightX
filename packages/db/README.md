@@ -8,10 +8,13 @@ the engineering brief. Prisma 6.19.x, Postgres 16.
 prisma/schema.prisma                         the model (brief §4 + marked additions)
 prisma/migrations/0001_init                  generated from the schema (prisma migrate diff)
 prisma/migrations/0002_rls_and_guards        hand-written: role, RLS policies, triggers
+prisma/migrations/0003_customs_profile_and_quote_1_1
+                                             generated DDL + hand-written CHECKs/trigger/RLS
 src/client.ts     createPrismaClient()       one pool per process
 src/tenancy.ts    forOrganization(), withOrgTransaction(), scopeArgs()
 src/rbac.ts       can(role, action), assertCan()
 src/audit.ts      recordAudit(tx, entry)
+src/stores.ts     PrismaTariffCacheStore, PrismaFxRateStore, PrismaEmailSignupRepository
 generated/        Prisma client output — gitignored, run `pnpm generate`
 ```
 
@@ -43,6 +46,18 @@ Copy `.env.example` to `.env` for local work. Prisma reads `DATABASE_URL` from i
   `prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script`.
   `0002_rls_and_guards` is hand-written and idempotent (`DROP ... IF EXISTS` / `CREATE OR REPLACE`
   / `DO $$ IF NOT EXISTS $$`), so it can be re-applied to repair a database.
+- `0003_customs_profile_and_quote_1_1` = generated DDL (part 1) + hand-written, idempotent rules
+  (part 2). Part 1 came from `prisma migrate diff --from-schema-datamodel <schema.prisma as of 0002>
+--to-schema-datamodel prisma/schema.prisma --script`.
+- **Shadow database (fixed).** 0002's `REVOKE ... "_prisma_migrations"` is guarded with
+  `to_regclass`, so `migrate dev` and `migrate diff --from-migrations` can replay all migrations
+  into a shadow database. The guard was added before any non-throwaway database applied 0002.
+- Adding a column to `quotes`/`quote_lines` is safe for accepted quotes: `ALTER TABLE ... ADD
+COLUMN` is DDL, so the row triggers do not fire, and with a constant default the new column reads
+  the same in `OLD` and `NEW`. Verified for 0003 on a database with an accepted quote created under
+  0002: after `migrate deploy`, changing a new column on it is rejected and status → `CANCELLED` is
+  allowed (plus `test/customs-profile.db.test.ts`, which repeats the DDL in a rolled-back
+  transaction when the connection owns `quotes`).
 
 ### Rollback note (required in every migration PR)
 
@@ -145,6 +160,71 @@ Rules:
   `shipment_events` for its run; `audit_logs` keep their rows with `organization_id` set to `NULL`
   by the FK (`ON DELETE SET NULL` — the one `UPDATE` shape the audit trigger allows).
 
+## Customs profile (migration 0003)
+
+`CustomsProfile` (`customs_profiles`, tenant table, 1:1 with `Organization`) holds how duty/VAT is
+paid at the border: `usePva` (postponed VAT accounting), `paymentMethod` (`PaymentMethod`:
+`OWN_DEFERMENT` | `BROKER_DEFERMENT` (default) | `CDS_CASH_ACCOUNT` — additive-only like every enum),
+`danNumber`/`danLimit`, the CDS authority confirmation (`cdsAuthorityGranted`,
+`cdsAuthorityConfirmedAt`, `cdsAuthorityConfirmedById`) and the forwarder's deferment terms
+(`brokerDefermentFeePct`, `brokerDefermentMinimumGbp`; `null` = unknown) that feed the engine's
+`brokerDeferment` input.
+
+- `danNumber` is sensitive like the EORI: never logged or put in audit metadata, and encrypted at
+  rest (§7.3) once the field-encryption extension lands. That migration must drop the
+  `customs_profiles_dan_number_format` CHECK (ciphertext does not match `^[0-9]{7}$`) and rely on
+  the zod validator instead.
+- Database rules: DAN is 7 digits; `OWN_DEFERMENT` needs a DAN; fee pct in [0, 100], minimum and
+  DAN limit ≥ 0; `cdsAuthorityGranted` needs `cdsAuthorityConfirmedAt`.
+- Trigger `customs_profiles_pva_requires_vat`: `usePva = true` only when the owning organisation has
+  `vat_registered = true AND vat_number IS NOT NULL`. It reads `organizations` under the caller's
+  RLS; if the row is not visible the write is rejected (fail closed). The mirror trigger
+  `organizations_vat_required_by_pva` stops an organisation clearing its VAT registration/number
+  while PVA is on — turn PVA off first.
+- Hard-deleting an organisation (§7.3 maintenance job) must delete its `customs_profiles` row first
+  (FK `ON DELETE RESTRICT`).
+- `Quote.paymentMethod` is a snapshot of the routing in force when the quote was computed, not a
+  reference; the engine 1.1 columns (`vatPostponed`, `borderOutlay`, `assistsGbp`, `financingFee`,
+  `inlandVatAdjustment`; per line `assistsGbp`, `allocatedFinancingFeeGbp`,
+  `allocatedInlandVatAdjustmentGbp`) default to false/0 so older quotes stay valid.
+
+### Phase 2 booking preconditions (additions to brief §6.1 — design only, nothing is built)
+
+To be enforced server-side in the booking transaction alongside §6.1 items 1–7:
+
+8. If `customsProfile.paymentMethod = OWN_DEFERMENT`, then `customsProfile.cdsAuthorityGranted` must
+   be true: CDS only lets the forwarder use the importer's DAN once the importer has authorised the
+   forwarder's EORI against that DAN in their CDS account.
+9. If the quote was computed with PVA (`quote.vatPostponed` / `customsProfile.usePva`), the
+   organisation must still be VAT-registered with a VAT number (the triggers above keep the profile
+   consistent; re-check at booking time because registration can lapse between quote and booking).
+10. The quote's snapshotted `paymentMethod` must equal the profile's current one; otherwise
+    recompute the quote (the financing fee / border outlay depend on it).
+
+## Prisma stores (src/stores.ts)
+
+Implementations of the persistence seams used by `apps/web` (`app/services/db.server.ts`). The
+three tables are global — `TariffCache`, `FxRate`, `EmailSignup` are `PASSTHROUGH_MODELS` with no
+RLS — so the stores take the plain `PrismaClient`.
+
+- `PrismaTariffCacheStore` (adapters `TariffCacheStore`). The interface is keyed by commodity code
+  only, the table by `(hs_code, origin_country)`: rows are stored with `origin_country = '*'`
+  (`TARIFF_CACHE_ANY_ORIGIN`) because the cached `NormalisedCommodity` holds the measures for every
+  origin and the engine filters by origin. `get` validates `payload` with a zod schema mirroring
+  `NormalisedCommodity` (type-checked against it both ways); a corrupt row is a miss (optional
+  `onCorruptRow` callback) and gets overwritten by the next fetch. TTL is the caller's (24h, §5.2);
+  `get` returns expired rows like the in-memory cache and the client compares `expiresAt`.
+- `PrismaFxRateStore` (adapters `FxRateStore`). `validFrom`/`validTo` are `YYYY-MM-DD` calendar days
+  stored as UTC midnight; `validTo` is inclusive of its whole UTC day (`find` matches
+  `validFrom <= at AND validTo >= start of at's UTC day`). Latest `validFrom` wins. Rates stay
+  decimal strings (`Prisma.Decimal` in between, `toString()` out — no padding); a record with more
+  than 6 dp, a non-positive rate or an impossible date is rejected before anything is written.
+  `upsert` is idempotent on `(source, currency, validFrom)` and runs in one transaction.
+- `PrismaEmailSignupRepository` (web `EmailSignupRepository`). `add` is one
+  `INSERT ... ON CONFLICT DO NOTHING` (`createMany({ skipDuplicates })`): a duplicate email returns
+  `created: false` and does not overwrite. `email_signups.source` is NOT NULL, so a missing source
+  is stored as `'unknown'` (`SIGNUP_SOURCE_UNKNOWN`).
+
 ## Accepted-quote trigger (§5.9)
 
 `quotes_accepted_immutable` (BEFORE UPDATE OR DELETE ON `quotes`):
@@ -170,6 +250,12 @@ or `/append-only|permission denied/`.
 - `test/tenancy.test.ts` — `scopeArgs` rewriting, no database.
 - `test/migrations.test.ts` — migration files present, every tenant table has RLS + policy +
   `@@map`, every schema model is classified, triggers present.
+- `test/stores.test.ts` — the Prisma stores against a stub client (argument shapes, validation,
+  date/decimal helpers), no database.
+- `test/customs-profile.db.test.ts`, `test/stores.db.test.ts` — with `DATABASE_URL`: 0003 CHECKs,
+  the PVA trigger pair, customs_profiles isolation, engine 1.1 quote columns and immutability, and
+  the three stores round-tripping. The DDL probe is skipped when the connection does not own
+  `quotes` (e.g. a `harbour_app` login).
 - `test/cross-tenant.db.test.ts` — runs only with `DATABASE_URL` against a migrated database:
   scoped client cannot see/update/delete/redirect to another org, raw `SELECT` under
   `withOrgTransaction` returns only that org's rows, no context → no rows, raw cross-tenant
@@ -185,7 +271,9 @@ DATABASE_URL=postgresql://harbour:harbour@localhost:5432/harbour pnpm --filter @
 
 ## Schema additions vs the brief
 
-All marked `(NEW vs brief)` in `schema.prisma`. In short: engine output fields on `Quote`
+All marked `(NEW vs brief)` in `schema.prisma`. Migration 0003 adds `CustomsProfile` +
+`PaymentMethod` and the engine calcVersion 1.1 snapshot columns (see "Customs profile"). Before that:
+engine output fields on `Quote`
 (`apportionmentBasis`, `freightToBorderGbp`, `freightPostBorderGbp`, `supplierBorneDuty/Vat`,
 `fxSnapshots`) and `QuoteLine` (`chargeableWeight`, the six `allocated*Gbp` splits,
 `supplierBorne*Gbp`, `lineLandedCost[ExVat]Gbp`, `landedCostPerUnitIncVat`, denormalised

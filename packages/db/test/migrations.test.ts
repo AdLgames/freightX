@@ -12,6 +12,13 @@ const migrationDirs = readdirSync(MIGRATIONS_DIR)
   .sort();
 const readMigration = (dir: string) =>
   readFileSync(join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf8');
+/** Everything after 0001_init: where tenant tables get their RLS block (0002, then per new table). */
+const laterMigrationsSql = () =>
+  migrationDirs
+    .filter((d) => d !== '0001_init')
+    .map(readMigration)
+    .join('\n');
+const allMigrationsSql = () => migrationDirs.map(readMigration).join('\n');
 
 /** Parses `model X { ... }` blocks out of schema.prisma. */
 const modelBlocks = (): Record<string, string> => {
@@ -37,11 +44,31 @@ describe('migration directories', () => {
     }
     expect(migrationDirs[0]).toBe('0001_init');
     expect(migrationDirs[1]).toBe('0002_rls_and_guards');
+    expect(migrationDirs[2]).toBe('0003_customs_profile_and_quote_1_1');
   });
 });
 
 describe('schema ↔ allow-lists', () => {
   const blocks = modelBlocks();
+
+  it('the tenant table list is exactly the expected set (removing one needs a deliberate edit here)', () => {
+    expect(Object.values(TENANT_TABLES).sort()).toEqual(
+      [
+        'audit_logs',
+        'customs_profiles',
+        'documents',
+        'memberships',
+        'organizations',
+        'outbox_events',
+        'products',
+        'quote_lines',
+        'quotes',
+        'shipment_events',
+        'shipments',
+        'suppliers',
+      ].sort(),
+    );
+  });
 
   it('every model in schema.prisma is classified as tenant or pass-through', () => {
     const classified = new Set<string>([...TENANT_MODELS, ...PASSTHROUGH_MODELS]);
@@ -80,8 +107,8 @@ describe('schema ↔ allow-lists', () => {
   });
 });
 
-describe('0001_init', () => {
-  const sql = readMigration('0001_init');
+describe('table creation (0001_init and later)', () => {
+  const sql = allMigrationsSql();
 
   it('creates every tenant table with a uuid organization_id', () => {
     for (const table of Object.values(TENANT_TABLES)) {
@@ -103,7 +130,8 @@ describe('0002_rls_and_guards', () => {
     expect(sql).toMatch(/CREATE ROLE harbour_app NOLOGIN/);
   });
 
-  it('enables and forces row level security on every tenant table', () => {
+  it('enables and forces row level security on every tenant table (0002 or later)', () => {
+    const sql = laterMigrationsSql();
     for (const table of Object.values(TENANT_TABLES)) {
       expect(sql, `${table} ENABLE RLS`).toContain(
         `ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`,
@@ -149,5 +177,74 @@ describe('0002_rls_and_guards', () => {
     for (const m of sql.matchAll(/CREATE TRIGGER (\w+)\s+BEFORE [A-Z ]+ ON "(\w+)"/g)) {
       expect(sql).toContain(`DROP TRIGGER IF EXISTS ${m[1]} ON "${m[2]}";`);
     }
+  });
+});
+
+describe('0003_customs_profile_and_quote_1_1', () => {
+  const sql = readMigration('0003_customs_profile_and_quote_1_1');
+  const [, handWritten = ''] = sql.split('Part 2 — hand-written');
+
+  it('adds the payment_method enum and the engine 1.1 quote columns additively', () => {
+    expect(sql).toContain(
+      `CREATE TYPE "payment_method" AS ENUM ('OWN_DEFERMENT', 'BROKER_DEFERMENT', 'CDS_CASH_ACCOUNT');`,
+    );
+    for (const col of ['assists_gbp', 'border_outlay', 'financing_fee', 'inland_vat_adjustment']) {
+      expect(sql).toMatch(new RegExp(`"${col}" DECIMAL\\(14,2\\) NOT NULL DEFAULT 0`));
+    }
+    expect(sql).toContain('"vat_postponed" BOOLEAN NOT NULL DEFAULT false');
+    expect(sql).toMatch(/ADD COLUMN\s+"payment_method" "payment_method",/);
+    for (const col of [
+      'assists_gbp',
+      'allocated_financing_fee_gbp',
+      'allocated_inland_vat_adjustment_gbp',
+    ]) {
+      expect(sql).toMatch(new RegExp(`"${col}" DECIMAL\\(14,2\\) NOT NULL DEFAULT 0`));
+    }
+    // Additive only: nothing dropped, renamed or narrowed (comments — the rollback note — aside).
+    const statements = sql.replace(/--[^\n]*/g, '');
+    expect(statements).not.toMatch(/\bDROP (COLUMN|TABLE|TYPE)\b/);
+    expect(statements).not.toMatch(/\bRENAME\b|ALTER COLUMN/);
+  });
+
+  it('installs the customs_profiles CHECK constraints', () => {
+    expect(handWritten).toContain("CHECK (dan_number IS NULL OR dan_number ~ '^[0-9]{7}$')");
+    expect(handWritten).toContain(
+      "CHECK (payment_method <> 'OWN_DEFERMENT' OR dan_number IS NOT NULL)",
+    );
+    expect(handWritten).toMatch(
+      /broker_deferment_fee_pct >= 0 AND broker_deferment_fee_pct <= 100/,
+    );
+    expect(handWritten).toMatch(/broker_deferment_minimum_gbp >= 0/);
+    expect(handWritten).toContain(
+      'CHECK (NOT cds_authority_granted OR cds_authority_confirmed_at IS NOT NULL)',
+    );
+  });
+
+  it('installs the PVA trigger pair and grants customs_profiles to harbour_app', () => {
+    expect(handWritten).toMatch(
+      /CREATE TRIGGER customs_profiles_pva_requires_vat\s+BEFORE INSERT OR UPDATE ON "customs_profiles"/,
+    );
+    expect(handWritten).toMatch(
+      /CREATE TRIGGER organizations_vat_required_by_pva\s+BEFORE UPDATE OF vat_registered, vat_number ON "organizations"/,
+    );
+    expect(handWritten).toContain('IF eligible IS NOT TRUE THEN'); // NULL (row hidden by RLS) rejects
+    expect(handWritten).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "customs_profiles" TO harbour_app;',
+    );
+  });
+
+  it('the hand-written part is idempotent', () => {
+    for (const m of handWritten.matchAll(/ADD CONSTRAINT (\w+)/g)) {
+      expect(handWritten).toContain(`DROP CONSTRAINT IF EXISTS ${m[1]};`);
+    }
+    for (const m of handWritten.matchAll(/CREATE POLICY (\w+) ON "(\w+)"/g)) {
+      expect(handWritten).toContain(`DROP POLICY IF EXISTS ${m[1]} ON "${m[2]}";`);
+    }
+    for (const m of handWritten.matchAll(
+      /CREATE TRIGGER (\w+)\s+BEFORE [A-Z ,_a-z]+? ON "(\w+)"/g,
+    )) {
+      expect(handWritten).toContain(`DROP TRIGGER IF EXISTS ${m[1]} ON "${m[2]}";`);
+    }
+    expect(handWritten).not.toMatch(/CREATE FUNCTION/); // only CREATE OR REPLACE
   });
 });

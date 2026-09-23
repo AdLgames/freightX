@@ -43,6 +43,20 @@ export type { Role, Action } from './rbac.js';
 export { recordAudit } from './audit.js';
 export type { AuditEntry, AuditWriter } from './audit.js';
 
+export {
+  PrismaTariffCacheStore,
+  PrismaFxRateStore,
+  PrismaEmailSignupRepository,
+  TARIFF_CACHE_ANY_ORIGIN,
+  SIGNUP_SOURCE_UNKNOWN,
+  normalisedCommoditySchema,
+  isoDateToUtcMidnight,
+  utcIsoDate,
+  startOfUtcDay,
+  fxRecordToRow,
+} from './stores.js';
+export type { PrismaTariffCacheStoreOptions, EmailSignupInput } from './stores.js';
+
 // Generated client re-exports. `PrismaClient` is exported as a type only: construct instances via
 // createPrismaClient() so there is one pool per process. `Role` (the Prisma enum) is exported as
 // PrismaRole because the RBAC `Role` union above carries the same values.
@@ -55,12 +69,14 @@ export {
   ShipmentStatus,
   DocumentType,
   DocumentStatus,
+  PaymentMethod,
   Role as PrismaRole,
 } from '../generated/client/index.js';
 export type {
   PrismaClient,
   $Enums,
   Organization,
+  CustomsProfile,
   User,
   Membership,
   MagicLinkToken,
