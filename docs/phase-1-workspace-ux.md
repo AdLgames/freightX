@@ -17,6 +17,14 @@ change the proposed copy where it conflicted with the brief or with how CDS work
   `Organization.eoriNumber` (encrypted at rest, §7.3), audit `org.eori.update`. HMRC EORI check
   runs as an async job (§5.6).
 
+### 1b. Company lookup (ADR-0015)
+
+- "Is your business a limited company?" The platform looks up the organisation name at
+  Companies House and shows the best match: "Is this you? Hydro Imports Ltd, 12345678, active."
+  The user confirms or picks another match, or says "I'm a sole trader or partnership".
+- Backend: stores the company number, status, type and check time. Only active limited
+  companies and LLPs will later see the trade finance module; nothing else changes for others.
+
 ### 2. VAT cash flow
 
 - "Are you VAT registered in the UK?" Yes / No.
