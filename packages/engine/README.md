@@ -88,6 +88,16 @@ The DAP/DPU reading is ADR-0005 and needs customs-practitioner sign-off.
 - Duty expressions: ad valorem, specific (`£ x / kg | 100 kg | 1000 kg | p/st …`), compound.
   `MAX`/`MIN` clauses or unknown units → `TARIFF_AMBIGUOUS`. Never 0% by default.
 
+## Actual costs and variance (ADR-0014)
+
+`absorbActuals(input)` takes the accepted quote's per-line estimates by category and the posted
+bill lines (already in GBP at the payment rate) and returns actual landed cost per SKU, the
+variance by category, the biggest drivers per line for an "explain this" view, and which
+categories still have no bill. Shared costs are split by the same bases the quote used:
+freight, fees and unplanned charges by chargeable weight, duty and deferment fees by customs
+value, insurance and assists by goods value, import VAT by VAT base. Import VAT counts as a cost
+only when it is not recoverable. `ACTUALS_VERSION` is separate from `CALC_VERSION`.
+
 ## Status (§5.9)
 
 Blocking warnings (→ `INDICATIVE`): `HS_UNVERIFIED`, `TARIFF_AMBIGUOUS`, `RATE_OUTLIER`,
