@@ -198,7 +198,7 @@ describe('absorbActuals — fallbacks and invariants', () => {
         fc.boolean(),
         fc.constantFrom('SEA_LCL', 'AIR', 'ROAD'),
         (lines, actuals, vatRecoverable, mode) => {
-          const r = absorbActuals({ mode: mode as 'SEA_LCL', vatRecoverable, lines, actuals });
+          const r = absorbActuals({ mode: mode, vatRecoverable, lines, actuals });
           for (const c of COST_CATEGORIES) {
             const billed = sum(
               actuals.filter((a) => a.category === c).map((a) => D(a.amountGbp)),
