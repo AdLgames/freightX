@@ -1,0 +1,14 @@
+# Copy to dev.tfvars and fill in. Real tfvars files are not committed: add
+# `infra/terraform/environments/*.tfvars` to the root .gitignore before creating one, or pass
+# values with -var / TF_VAR_* instead. Nothing here is a secret, but account IDs stay out of git.
+
+environment           = "dev"
+cloudflare_account_id = "<32-hex cloudflare account id>"
+bucket_name           = "harbour-documents"
+region                = "weur"
+jurisdiction          = "eu"
+
+tags = {
+  owner = "<team or person>"
+  cost  = "dev"
+}

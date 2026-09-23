@@ -1,0 +1,61 @@
+# Gitleaks configuration for Harbour (engineering brief §7.6).
+# Used by CI (.github/workflows/ci.yml) and the pre-commit hook.
+#
+# Start from the built-in ruleset and add project-specific rules and allowlists.
+title = "harbour"
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Project rules
+# ---------------------------------------------------------------------------
+# Stripe secret keys (sk_live_/sk_test_/rk_live_/rk_test_) are already covered by the default
+# `stripe-access-token` rule, so no duplicate rule is defined here.
+# The UK Trade Tariff API is unauthenticated, so there is no HMRC key pattern to add.
+
+[[rules]]
+id = "stripe-webhook-signing-secret"
+description = "Stripe webhook signing secret"
+regex = '''\bwhsec_[A-Za-z0-9]{24,}\b'''
+keywords = ["whsec_"]
+
+[[rules]]
+id = "cloudflare-turnstile-secret-key"
+description = "Cloudflare Turnstile secret key (server-side). Site keys are public and are not matched."
+# Turnstile secret keys are assigned to an identifier containing TURNSTILE and SECRET.
+regex = '''(?i)turnstile[_-]?secret(?:[_-]?key)?\s*[:=]\s*["']?(0x[A-Za-z0-9_-]{30,})'''
+secretGroup = 1
+keywords = ["turnstile"]
+
+[[rules]]
+id = "harbour-session-or-encryption-secret"
+description = "Application session / encryption master key assigned in source"
+regex = '''(?i)\b(SESSION_SECRET|ENCRYPTION_MASTER_KEY|DATA_KEY_KMS_KEY|FORWARDER_WEBHOOK_SECRET)\s*=\s*["']?([A-Za-z0-9+/=_-]{32,})["']?'''
+secretGroup = 2
+keywords = ["session_secret", "encryption_master_key", "data_key_kms_key", "forwarder_webhook_secret"]
+
+# ---------------------------------------------------------------------------
+# Allowlists
+# ---------------------------------------------------------------------------
+
+# Paths that legitimately contain high-entropy strings but never real secrets.
+[[allowlists]]
+description = "Lockfile and recorded/authored fixtures"
+paths = [
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''^packages/engine/fixtures/''',
+  '''^packages/adapters/fixtures/''',
+]
+
+# Obvious fake tokens used in tests and examples. Test files are NOT blanket-allowlisted: a real
+# key pasted into a *.test.ts still fails the scan. Only these clearly-fake shapes are permitted.
+[[allowlists]]
+description = "Placeholder tokens in tests and .env.example files"
+regexTarget = "match"
+regexes = [
+  '''(?i)\b(?:sk|rk)_(?:test|live)_(?:placeholder|example|fake|xxx+|0{6,}|1{6,}|redacted)\w*''',
+  '''(?i)\bwhsec_(?:placeholder|example|fake|xxx+|0{6,}|test)\w*''',
+  '''(?i)0x(?:0{20,}|A{20,}|placeholder|example)\w*''',
+  '''(?i)\b(?:placeholder|changeme|example|dummy|redacted)[-_]?(?:secret|token|key)\b''',
+]

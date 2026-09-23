@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.react-router/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+packages/db/generated/

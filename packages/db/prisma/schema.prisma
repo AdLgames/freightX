@@ -1,0 +1,509 @@
+// Harbour — Prisma schema (§4 of the engineering brief, implemented verbatim as the base).
+//
+// Additions beyond the brief are each marked `// (NEW vs brief) reason`.
+//
+// Conventions:
+//   * Table names are @@map'd to snake_case (and columns @map'd) so the hand-written RLS
+//     policies and triggers in prisma/migrations/0002_rls_and_guards read naturally
+//     (`organization_id`, `updated_at`, ...). Prisma model/field names stay as in the brief.
+//   * Every tenant model carries `organizationId` and an index that starts with it. The
+//     tenant allow-list used by the Prisma extension lives in src/tenancy.ts and the RLS
+//     table list in migration 0002 — test/migrations.test.ts keeps the three in sync.
+//   * All internal ids are `@db.Uuid` (NEW vs brief): Prisma's default for `String @default(uuid())`
+//     is TEXT, which cannot be compared with `current_setting('app.current_org')::uuid` in the
+//     RLS policies. External ids (Stripe, forwarder, HMRC measure SIDs, audit targetId) stay TEXT.
+//   * Money is always Decimal (§3). Never Float.
+//   * Enums are additive only; never rename a value in place (§4 migration rules).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Tenancy & identity ----------
+
+model Organization {
+  id               String    @id @default(uuid()) @db.Uuid
+  name             String
+  eoriNumber       String?   @map("eori_number") // encrypted at rest, validated on save (§5.6)
+  vatNumber        String?   @map("vat_number") // encrypted at rest, validated against HMRC VAT API (§5.6)
+  vatRegistered    Boolean   @default(false) @map("vat_registered")
+  baseCurrency     String    @default("GBP") @map("base_currency")
+  plan             Plan      @default(FREE)
+  stripeCustomerId String?   @unique @map("stripe_customer_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at") // soft delete
+
+  members        Membership[]
+  products       Product[]
+  suppliers      Supplier[]
+  quotes         Quote[]
+  quoteLines     QuoteLine[] // (NEW vs brief) inverse of the denormalised QuoteLine.organizationId
+  shipments      Shipment[]
+  shipmentEvents ShipmentEvent[] // (NEW vs brief) inverse of the denormalised ShipmentEvent.organizationId
+  documents      Document[] // (NEW vs brief) inverse of Document.organizationId
+  auditLogs      AuditLog[]
+
+  @@map("organizations")
+}
+
+model User {
+  id         String   @id @default(uuid()) @db.Uuid
+  email      String   @unique
+  name       String?
+  mfaEnabled Boolean  @default(false) @map("mfa_enabled")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  memberships       Membership[]
+  uploadedDocuments Document[]   @relation("uploadedDocuments") // (NEW vs brief) inverse of Document.uploadedBy
+  verifiedDocuments Document[]   @relation("verifiedDocuments") // (NEW vs brief) inverse of Document.verifiedBy
+
+  @@map("users")
+}
+
+model Membership {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  role           Role     @default(MEMBER)
+  createdAt      DateTime @default(now()) @map("created_at") // (NEW vs brief) needed for "member since" and audit ordering
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+  @@index([organizationId]) // (NEW vs brief) every tenant model has an index starting with organizationId
+  @@map("memberships")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+
+  @@map("role")
+}
+
+enum Plan {
+  FREE
+  STARTER
+  PRO
+
+  @@map("plan")
+}
+
+// ---------- Auth & growth (not tenant-scoped) ----------
+
+// (NEW vs brief) §7.1: magic-link tokens are single-use, 15-minute, and stored hashed. The raw
+// token is only ever in the email link; `tokenHash` = sha256(token). `usedAt` enforces single use.
+model MagicLinkToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  email     String
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  ip        String?
+
+  @@index([email, createdAt]) // rate limiting: 5 link requests / hour / email (§7.1)
+  @@map("magic_link_tokens")
+}
+
+// (NEW vs brief) Phase 0 gate is "50 email signups" (§2). `source` = which surface captured it
+// (e.g. "calculator", "landing").
+model EmailSignup {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  source    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("email_signups")
+}
+
+// ---------- Catalogue ----------
+
+model Supplier {
+  id              String    @id @default(uuid()) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  name            String
+  countryCode     String    @map("country_code") // ISO 3166-1 alpha-2 — drives preferential origin
+  defaultIncoterm Incoterm? @map("default_incoterm")
+  createdAt       DateTime  @default(now()) @map("created_at") // (NEW vs brief) timestamps for every mutable row
+  updatedAt       DateTime  @updatedAt @map("updated_at") // (NEW vs brief)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  products     Product[]
+
+  @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from products (keeps denormalised org ids consistent)
+  @@index([organizationId])
+  @@map("suppliers")
+}
+
+model Product {
+  id               String    @id @default(uuid()) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  supplierId       String?   @map("supplier_id") @db.Uuid
+  sku              String
+  name             String
+  hsCode           String    @map("hs_code") // 8 or 10 digits, validated against tariff (§5.2)
+  hsCodeVerifiedAt DateTime? @map("hs_code_verified_at") // null = user-entered, unverified
+  originCountry    String    @map("origin_country") // ISO code; may differ from supplier country
+  unitValue        Decimal   @map("unit_value") @db.Decimal(14, 4)
+  currency         String // ISO 4217
+  weightKg         Decimal   @map("weight_kg") @db.Decimal(10, 3)
+  volumeCbm        Decimal   @map("volume_cbm") @db.Decimal(10, 4)
+  unitsPerCarton   Int?      @map("units_per_carton")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  // (NEW vs brief) composite FK (supplier_id, organization_id) → suppliers(id, organization_id):
+  // a product can never point at another tenant's supplier, whatever the app layer does.
+  supplier     Supplier?    @relation(fields: [supplierId, organizationId], references: [id, organizationId])
+  quoteLines   QuoteLine[]
+
+  @@unique([organizationId, sku])
+  @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from quote_lines
+  @@index([organizationId])
+  @@map("products")
+}
+
+// ---------- Quoting ----------
+
+enum QuoteStatus {
+  DRAFT
+  INDICATIVE
+  READY
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+
+  @@map("quote_status")
+}
+
+enum Incoterm {
+  EXW
+  FCA
+  FOB
+  CFR
+  CIF
+  DAP
+  DPU
+  DDP
+
+  @@map("incoterm")
+}
+
+enum Mode {
+  SEA_LCL
+  SEA_FCL
+  AIR
+  ROAD
+  RAIL
+
+  @@map("mode")
+}
+
+model Quote {
+  id               String      @id @default(uuid()) @db.Uuid
+  organizationId   String      @map("organization_id") @db.Uuid
+  status           QuoteStatus @default(DRAFT)
+  incoterm         Incoterm
+  mode             Mode
+  originCountry    String      @map("origin_country")
+  originPort       String?     @map("origin_port") // UN/LOCODE
+  destinationPort  String?     @map("destination_port") // UN/LOCODE
+  deliveryPostcode String?     @map("delivery_postcode")
+
+  // Snapshotted inputs (nothing here is a live reference)
+  fxRate        Decimal  @map("fx_rate") @db.Decimal(14, 6) // supplier ccy → GBP (primary snapshot)
+  fxSource      String   @map("fx_source") // "HMRC_MONTHLY" | "ECB" | "MANUAL"
+  fxDate        DateTime @map("fx_date")
+  fxSnapshots   Json     @map("fx_snapshots") // (NEW vs brief) every FX snapshot used, keyed by currency — engine QuoteResult.fxSnapshots (multi-currency quotes)
+  rateSource    String   @map("rate_source") // "SEARATES" | "RATE_SHEET_V3" | "MANUAL"
+  rateFetchedAt DateTime @map("rate_fetched_at")
+  validUntil    DateTime @map("valid_until") // freight rate expiry
+
+  // Aggregates in GBP, computed from lines
+  goodsValueGbp        Decimal @map("goods_value_gbp") @db.Decimal(14, 2)
+  freightCost          Decimal @map("freight_cost") @db.Decimal(14, 2)
+  freightToBorderGbp   Decimal @map("freight_to_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 dutiable leg — engine QuoteTotals.freightToBorderGbp
+  freightPostBorderGbp Decimal @map("freight_post_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 VAT-base-only leg — engine QuoteTotals.freightPostBorderGbp
+  originFees           Decimal @map("origin_fees") @db.Decimal(14, 2)
+  destinationFees      Decimal @map("destination_fees") @db.Decimal(14, 2)
+  insurancePremium     Decimal @default(0) @map("insurance_premium") @db.Decimal(14, 2)
+  customsValue         Decimal @map("customs_value") @db.Decimal(14, 2) // not "CIF" — see §5.3
+  totalDuty            Decimal @map("total_duty") @db.Decimal(14, 2)
+  totalVat             Decimal @map("total_vat") @db.Decimal(14, 2)
+  vatRecoverable       Boolean @map("vat_recoverable") // postponed VAT accounting
+  platformFee          Decimal @map("platform_fee") @db.Decimal(14, 2)
+  totalLandedCost      Decimal @map("total_landed_cost") @db.Decimal(14, 2) // incl. VAT
+  totalLandedCostExVat Decimal @map("total_landed_cost_ex_vat") @db.Decimal(14, 2) // the number VAT-registered users care about
+  supplierBorneDuty    Decimal @default(0) @map("supplier_borne_duty") @db.Decimal(14, 2) // (NEW vs brief) DDP: duty the supplier bears, informational — engine QuoteTotals.supplierBorneDuty
+  supplierBorneVat     Decimal @default(0) @map("supplier_borne_vat") @db.Decimal(14, 2) // (NEW vs brief) DDP: VAT the supplier bears — engine QuoteTotals.supplierBorneVat
+  apportionmentBasis   String  @map("apportionment_basis") // (NEW vs brief) §5.4 "store the basis on the quote" — "SEA_WEIGHT_OR_MEASURE" | "AIR_VOLUMETRIC_6000"
+
+  warnings    Json // array of {code, message} e.g. ADD_APPLIES, HS_UNVERIFIED
+  calcVersion String    @map("calc_version") // engine version that produced this quote
+  acceptedAt  DateTime? @map("accepted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  lines        QuoteLine[]
+  shipment     Shipment?
+
+  @@unique([id, organizationId]) // (NEW vs brief) target of composite FKs from quote_lines and shipments
+  @@index([organizationId, status])
+  @@index([organizationId, validUntil]) // (NEW vs brief) hourly expiry job (§5.8) scans by validUntil
+  @@map("quotes")
+}
+
+model QuoteLine {
+  id                            String   @id @default(uuid()) @db.Uuid
+  organizationId                String   @map("organization_id") @db.Uuid // (NEW vs brief) denormalised for RLS
+  quoteId                       String   @map("quote_id") @db.Uuid
+  productId                     String   @map("product_id") @db.Uuid
+  quantity                      Int
+  // Snapshots
+  hsCode                        String   @map("hs_code")
+  originCountry                 String   @map("origin_country")
+  unitValue                     Decimal  @map("unit_value") @db.Decimal(14, 4)
+  currency                      String
+  unitValueGbp                  Decimal  @map("unit_value_gbp") @db.Decimal(14, 4)
+  lineGoodsValueGbp             Decimal  @map("line_goods_value_gbp") @db.Decimal(14, 2)
+  lineWeightKg                  Decimal  @map("line_weight_kg") @db.Decimal(10, 3)
+  lineVolumeCbm                 Decimal  @map("line_volume_cbm") @db.Decimal(10, 4)
+  chargeableWeight              Decimal  @map("chargeable_weight") @db.Decimal(14, 4) // (NEW vs brief) §5.4 apportionment share basis — engine LineResult.chargeableWeight
+  // Tariff result
+  tariffMeasureId               String?  @map("tariff_measure_id") // HMRC measure SID we applied
+  dutyType                      String   @map("duty_type") // "AD_VALOREM" | "SPECIFIC" | "COMPOUND" | "NONE"
+  dutyRatePct                   Decimal? @map("duty_rate_pct") @db.Decimal(7, 4)
+  dutySpecific                  Json?    @map("duty_specific") // {amount, unit, per} for £/kg etc.
+  preferenceClaimed             Boolean  @default(false) @map("preference_claimed")
+  addRatePct                    Decimal? @map("add_rate_pct") @db.Decimal(7, 4) // anti-dumping, if any
+  vatRatePct                    Decimal  @map("vat_rate_pct") @db.Decimal(5, 2) // 20 / 5 / 0
+  // Allocations (freight apportioned by chargeable weight — §5.4)
+  allocatedFreightGbp           Decimal  @map("allocated_freight_gbp") @db.Decimal(14, 2)
+  allocatedFreightToBorderGbp   Decimal  @map("allocated_freight_to_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 split — engine LineResult.allocatedFreightToBorderGbp
+  allocatedFreightPostBorderGbp Decimal  @map("allocated_freight_post_border_gbp") @db.Decimal(14, 2) // (NEW vs brief) §5.3 split
+  allocatedOriginFeesGbp        Decimal  @map("allocated_origin_fees_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of shipment-level origin fees
+  allocatedDestinationFeesGbp   Decimal  @map("allocated_destination_fees_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of destination fees
+  allocatedInsuranceGbp         Decimal  @map("allocated_insurance_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of insurance premium
+  allocatedPlatformFeeGbp       Decimal  @map("allocated_platform_fee_gbp") @db.Decimal(14, 2) // (NEW vs brief) per-line share of platform fee
+  lineCustomsValueGbp           Decimal  @map("line_customs_value_gbp") @db.Decimal(14, 2)
+  lineDutyGbp                   Decimal  @map("line_duty_gbp") @db.Decimal(14, 2)
+  lineVatGbp                    Decimal  @map("line_vat_gbp") @db.Decimal(14, 2)
+  supplierBorneDutyGbp          Decimal  @default(0) @map("supplier_borne_duty_gbp") @db.Decimal(14, 2) // (NEW vs brief) DDP, informational — engine LineResult.supplierBorneDutyGbp
+  supplierBorneVatGbp           Decimal  @default(0) @map("supplier_borne_vat_gbp") @db.Decimal(14, 2) // (NEW vs brief) DDP, informational
+  lineLandedCostExVatGbp        Decimal  @map("line_landed_cost_ex_vat_gbp") @db.Decimal(14, 2) // (NEW vs brief) line total ex VAT — engine LineResult.lineLandedCostExVatGbp
+  lineLandedCostGbp             Decimal  @map("line_landed_cost_gbp") @db.Decimal(14, 2) // (NEW vs brief) line total incl. VAT
+  landedCostPerUnit             Decimal  @map("landed_cost_per_unit") @db.Decimal(14, 4)
+  landedCostPerUnitIncVat       Decimal  @map("landed_cost_per_unit_inc_vat") @db.Decimal(14, 4) // (NEW vs brief) engine LineResult.landedCostPerUnitIncVat
+
+  organization Organization @relation(fields: [organizationId], references: [id]) // (NEW vs brief)
+  // (NEW vs brief) composite FKs carry organization_id so a line can never reference a quote or
+  // product from another tenant; the denormalised column is guaranteed consistent by Postgres.
+  quote        Quote        @relation(fields: [quoteId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  product      Product      @relation(fields: [productId, organizationId], references: [id, organizationId])
+
+  @@index([organizationId]) // (NEW vs brief) RLS / tenant scoping
+  @@index([quoteId])
+  @@map("quote_lines")
+}
+
+// ---------- Execution (Phase 2) ----------
+
+enum ShipmentStatus {
+  PENDING_DOCS
+  PENDING_BOOKING
+  BOOKED
+  DISPATCHED
+  IN_TRANSIT
+  AT_DESTINATION
+  CUSTOMS
+  CLEARED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  EXCEPTION
+  CANCELLED
+
+  @@map("shipment_status")
+}
+
+model Shipment {
+  id                    String         @id @default(uuid()) @db.Uuid
+  organizationId        String         @map("organization_id") @db.Uuid // denormalised for RLS
+  quoteId               String         @unique @map("quote_id") @db.Uuid
+  status                ShipmentStatus @default(PENDING_DOCS)
+  forwarderId           String?        @map("forwarder_id") // which partner
+  forwarderRef          String?        @map("forwarder_ref")
+  containerNo           String?        @map("container_no")
+  vesselOrFlight        String?        @map("vessel_or_flight")
+  etd                   DateTime?
+  eta                   DateTime?
+  atd                   DateTime?
+  ata                   DateTime?
+  bookingIdempotencyKey String?        @unique @map("booking_idempotency_key") // §6.2
+  lastPolledAt          DateTime?      @map("last_polled_at")
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  // (NEW vs brief) composite FK: a shipment can only be booked against its own tenant's quote.
+  quote        Quote           @relation(fields: [quoteId, organizationId], references: [id, organizationId])
+  documents    Document[]
+  events       ShipmentEvent[]
+
+  @@unique([id, organizationId]) // (NEW vs brief) target of composite FKs from shipment_events and documents
+  @@unique([quoteId, organizationId]) // (NEW vs brief) Prisma requires the 1:1 relation's scalar fields to be unique together (quoteId alone already is)
+  @@index([organizationId, status])
+  @@map("shipments")
+}
+
+// Append-only timeline (UPDATE/DELETE rejected by trigger in migration 0002).
+model ShipmentEvent {
+  id              String          @id @default(uuid()) @db.Uuid
+  organizationId  String          @map("organization_id") @db.Uuid // (NEW vs brief) denormalised for RLS so the policy needs no join
+  shipmentId      String          @map("shipment_id") @db.Uuid
+  source          String // "FORWARDER_WEBHOOK" | "POLL" | "MANUAL" | "SYSTEM"
+  providerEventId String?         @map("provider_event_id") // idempotency — unique per source
+  eventType       String          @map("event_type") // vessel_departed, customs_cleared...
+  statusAfter     ShipmentStatus? @map("status_after")
+  occurredAt      DateTime        @map("occurred_at")
+  receivedAt      DateTime        @default(now()) @map("received_at")
+  payload         Json // raw, redacted of PII
+
+  organization Organization @relation(fields: [organizationId], references: [id]) // (NEW vs brief)
+  // (NEW vs brief) composite FK keeps the denormalised organization_id consistent with the shipment.
+  shipment     Shipment     @relation(fields: [shipmentId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([source, providerEventId])
+  @@index([organizationId]) // (NEW vs brief) RLS / tenant scoping
+  @@index([shipmentId, occurredAt])
+  @@map("shipment_events")
+}
+
+enum DocumentType {
+  COMMERCIAL_INVOICE
+  PACKING_LIST
+  BILL_OF_LADING
+  AIRWAY_BILL
+  CERTIFICATE_OF_ORIGIN
+  INSURANCE_CERT
+  OTHER
+
+  @@map("document_type")
+}
+
+enum DocumentStatus {
+  UPLOADED
+  SCANNING
+  CLEAN
+  REJECTED
+  VERIFIED
+
+  @@map("document_status")
+}
+
+model Document {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  shipmentId     String?        @map("shipment_id") @db.Uuid
+  type           DocumentType
+  status         DocumentStatus @default(UPLOADED)
+  storageKey     String         @map("storage_key") // never a public URL; `orgId/shipmentId/docId` (§7.4)
+  originalName   String         @map("original_name")
+  mimeType       String         @map("mime_type")
+  sizeBytes      Int            @map("size_bytes")
+  sha256         String
+  version        Int            @default(1)
+  uploadedById   String         @map("uploaded_by_id") @db.Uuid
+  verifiedById   String?        @map("verified_by_id") @db.Uuid
+  verifiedAt     DateTime?      @map("verified_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id]) // (NEW vs brief)
+  // (NEW vs brief) composite FK: a document can only be attached to its own tenant's shipment.
+  shipment     Shipment?    @relation(fields: [shipmentId, organizationId], references: [id, organizationId])
+  uploadedBy   User         @relation("uploadedDocuments", fields: [uploadedById], references: [id]) // (NEW vs brief) who uploaded (audit / UI)
+  verifiedBy   User?        @relation("verifiedDocuments", fields: [verifiedById], references: [id]) // (NEW vs brief) who verified
+
+  @@index([organizationId])
+  @@index([shipmentId]) // (NEW vs brief) booking preconditions look up docs by shipment (§6.1)
+  @@map("documents")
+}
+
+// ---------- Cross-cutting ----------
+
+// Append-only (UPDATE/DELETE rejected by trigger in migration 0002). `metadata` must never
+// contain PII (§7.3): IDs only.
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  action         String // "quote.accept", "org.eori.update", "doc.download"
+  targetType     String   @map("target_type")
+  targetId       String   @map("target_id")
+  ip             String?
+  userAgent      String?  @map("user_agent")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id]) // (NEW vs brief) the brief's Organization.auditLogs needs this inverse side
+
+  @@index([organizationId, createdAt])
+  @@map("audit_logs")
+}
+
+// (NEW vs brief) Phase 2 outbox (§6.2): the booking transaction writes the Shipment and an
+// outbox row atomically; a worker performs the external call and marks it processed. Designed now
+// so Phase 2 needs no migration. NO CODE USES THIS TABLE YET — nothing ships until the forwarder
+// partnership is signed (§2). organizationId is nullable for system-level events (e.g. cache
+// refresh fan-out); no FK on purpose so an org hard-delete (§7.3) never has to touch the outbox.
+model OutboxEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  kind           String // e.g. "shipment.book", "forwarder.poll"
+  payload        Json
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @map("next_attempt_at")
+  processedAt    DateTime? @map("processed_at")
+  lastError      String?   @map("last_error")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([processedAt, nextAttemptAt])
+  @@index([organizationId]) // (NEW vs brief) RLS / tenant scoping
+  @@map("outbox_events")
+}
+
+model TariffCache {
+  hsCode        String   @map("hs_code")
+  originCountry String   @map("origin_country")
+  fetchedAt     DateTime @map("fetched_at")
+  expiresAt     DateTime @map("expires_at")
+  payload       Json
+
+  @@id([hsCode, originCountry])
+  @@map("tariff_cache")
+}
+
+model FxRate {
+  id        String   @id @default(uuid()) @db.Uuid
+  source    String
+  currency  String
+  rateToGbp Decimal  @map("rate_to_gbp") @db.Decimal(14, 6)
+  validFrom DateTime @map("valid_from")
+  validTo   DateTime @map("valid_to")
+
+  @@unique([source, currency, validFrom])
+  @@index([currency, validFrom]) // (NEW vs brief) FX resolution looks up "latest rate for currency as of date"
+  @@map("fx_rates")
+}

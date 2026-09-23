@@ -1,0 +1,284 @@
+{
+  "name": "02-fob-three-lines-rounding-remainder",
+  "notes": "Three identical lines (chargeable 2.0 CBM each). FOB: origin fees NOT added (includeOriginFees omitted). To-border 400/3 = 133.33 ×3 = 399.99 → remainder 0.01 to line 1 (largest weight tie → first). Post-border 150/3 = 50.00 each. Destination 235/3 = 78.33 ×3 = 234.99 → +0.01 line 1. Insurance 20/3 = 6.67 ×3 = 20.01 → −0.01 line 1 = 6.66. Sums must equal totals to the penny.",
+  "input": {
+    "incoterm": "FOB",
+    "mode": "SEA_LCL",
+    "originCountry": "CN",
+    "originPort": "CNSHA",
+    "destinationPort": "GBFXT",
+    "lines": [
+      {
+        "ref": "A",
+        "hsCode": "9503004100",
+        "hsCodeVerified": true,
+        "originCountry": "CN",
+        "quantity": 1000,
+        "unitValue": "5.00",
+        "currency": "USD",
+        "unitWeightKg": "0.5",
+        "unitVolumeCbm": "0.002",
+        "tariff": {
+          "kind": "MEASURES",
+          "verifiedAt": "2026-09-01T00:00:00Z",
+          "measures": [
+            {
+              "sid": "tc8",
+              "measureTypeId": "103",
+              "dutyExpression": "8.00 %",
+              "geographicalAreaId": "1011"
+            },
+            {
+              "sid": "v20",
+              "measureTypeId": "305",
+              "dutyExpression": "20.00 %",
+              "geographicalAreaId": "1011"
+            }
+          ]
+        }
+      },
+      {
+        "ref": "B",
+        "hsCode": "9503004100",
+        "hsCodeVerified": true,
+        "originCountry": "CN",
+        "quantity": 1000,
+        "unitValue": "5.00",
+        "currency": "USD",
+        "unitWeightKg": "0.5",
+        "unitVolumeCbm": "0.002",
+        "tariff": {
+          "kind": "MEASURES",
+          "verifiedAt": "2026-09-01T00:00:00Z",
+          "measures": [
+            {
+              "sid": "tc8",
+              "measureTypeId": "103",
+              "dutyExpression": "8.00 %",
+              "geographicalAreaId": "1011"
+            },
+            {
+              "sid": "v20",
+              "measureTypeId": "305",
+              "dutyExpression": "20.00 %",
+              "geographicalAreaId": "1011"
+            }
+          ]
+        }
+      },
+      {
+        "ref": "C",
+        "hsCode": "9503004100",
+        "hsCodeVerified": true,
+        "originCountry": "CN",
+        "quantity": 1000,
+        "unitValue": "5.00",
+        "currency": "USD",
+        "unitWeightKg": "0.5",
+        "unitVolumeCbm": "0.002",
+        "tariff": {
+          "kind": "MEASURES",
+          "verifiedAt": "2026-09-01T00:00:00Z",
+          "measures": [
+            {
+              "sid": "tc8",
+              "measureTypeId": "103",
+              "dutyExpression": "8.00 %",
+              "geographicalAreaId": "1011"
+            },
+            {
+              "sid": "v20",
+              "measureTypeId": "305",
+              "dutyExpression": "20.00 %",
+              "geographicalAreaId": "1011"
+            }
+          ]
+        }
+      }
+    ],
+    "fx": {
+      "rates": {
+        "USD": {
+          "rateToGbp": "0.78",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        },
+        "EUR": {
+          "rateToGbp": "0.86",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        },
+        "CNY": {
+          "rateToGbp": "0.11",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        }
+      }
+    },
+    "freight": {
+      "source": "RATE_SHEET_V1",
+      "fetchedAt": "2026-09-10T10:00:00Z",
+      "toBorderGbp": "400",
+      "postBorderGbp": "150",
+      "originFeesGbp": "120",
+      "destinationFeesGbp": "180",
+      "clearanceFeeGbp": "55"
+    },
+    "insurance": {
+      "premiumGbp": "20"
+    },
+    "vatRegistered": true
+  },
+  "expected": {
+    "ok": true,
+    "quote": {
+      "calcVersion": "1.0",
+      "status": "READY",
+      "warnings": [],
+      "incoterm": "FOB",
+      "mode": "SEA_LCL",
+      "apportionmentBasis": "SEA_WEIGHT_OR_MEASURE",
+      "fxRate": "0.78",
+      "fxSource": "HMRC_MONTHLY",
+      "fxDate": "2026-09-01",
+      "fxSnapshots": {
+        "USD": {
+          "rateToGbp": "0.78",
+          "source": "HMRC_MONTHLY",
+          "date": "2026-09-01"
+        }
+      },
+      "rateSource": "RATE_SHEET_V1",
+      "rateFetchedAt": "2026-09-10T10:00:00Z",
+      "validUntil": "2026-09-17T10:00:00.000Z",
+      "totals": {
+        "goodsValueGbp": "11700.00",
+        "freightCost": "550.00",
+        "freightToBorderGbp": "400.00",
+        "freightPostBorderGbp": "150.00",
+        "originFees": "0.00",
+        "destinationFees": "235.00",
+        "insurancePremium": "20.00",
+        "customsValue": "12120.00",
+        "totalDuty": "969.60",
+        "totalVat": "2694.92",
+        "vatRecoverable": true,
+        "platformFee": "0.00",
+        "totalLandedCostExVat": "13474.60",
+        "totalLandedCost": "16169.52",
+        "supplierBorneDuty": "0.00",
+        "supplierBorneVat": "0.00"
+      },
+      "lines": [
+        {
+          "ref": "A",
+          "hsCode": "9503004100",
+          "originCountry": "CN",
+          "quantity": 1000,
+          "unitValue": "5.0000",
+          "currency": "USD",
+          "unitValueGbp": "3.9000",
+          "lineGoodsValueGbp": "3900.00",
+          "lineWeightKg": "500.000",
+          "lineVolumeCbm": "2.0000",
+          "chargeableWeight": "2.0000",
+          "tariffMeasureId": "tc8",
+          "dutyType": "AD_VALOREM",
+          "dutyRatePct": "8.0000",
+          "dutySpecific": null,
+          "preferenceClaimed": false,
+          "addRatePct": null,
+          "vatRatePct": "20.00",
+          "allocatedFreightGbp": "183.34",
+          "allocatedFreightToBorderGbp": "133.34",
+          "allocatedFreightPostBorderGbp": "50.00",
+          "allocatedOriginFeesGbp": "0.00",
+          "allocatedDestinationFeesGbp": "78.34",
+          "allocatedInsuranceGbp": "6.67",
+          "allocatedPlatformFeeGbp": "0.00",
+          "lineCustomsValueGbp": "4040.01",
+          "lineDutyGbp": "323.20",
+          "lineVatGbp": "898.31",
+          "supplierBorneDutyGbp": "0.00",
+          "supplierBorneVatGbp": "0.00",
+          "lineLandedCostExVatGbp": "4491.55",
+          "lineLandedCostGbp": "5389.86",
+          "landedCostPerUnit": "4.4916",
+          "landedCostPerUnitIncVat": "5.3899"
+        },
+        {
+          "ref": "B",
+          "hsCode": "9503004100",
+          "originCountry": "CN",
+          "quantity": 1000,
+          "unitValue": "5.0000",
+          "currency": "USD",
+          "unitValueGbp": "3.9000",
+          "lineGoodsValueGbp": "3900.00",
+          "lineWeightKg": "500.000",
+          "lineVolumeCbm": "2.0000",
+          "chargeableWeight": "2.0000",
+          "tariffMeasureId": "tc8",
+          "dutyType": "AD_VALOREM",
+          "dutyRatePct": "8.0000",
+          "dutySpecific": null,
+          "preferenceClaimed": false,
+          "addRatePct": null,
+          "vatRatePct": "20.00",
+          "allocatedFreightGbp": "183.33",
+          "allocatedFreightToBorderGbp": "133.33",
+          "allocatedFreightPostBorderGbp": "50.00",
+          "allocatedOriginFeesGbp": "0.00",
+          "allocatedDestinationFeesGbp": "78.33",
+          "allocatedInsuranceGbp": "6.67",
+          "allocatedPlatformFeeGbp": "0.00",
+          "lineCustomsValueGbp": "4040.00",
+          "lineDutyGbp": "323.20",
+          "lineVatGbp": "898.31",
+          "supplierBorneDutyGbp": "0.00",
+          "supplierBorneVatGbp": "0.00",
+          "lineLandedCostExVatGbp": "4491.53",
+          "lineLandedCostGbp": "5389.84",
+          "landedCostPerUnit": "4.4915",
+          "landedCostPerUnitIncVat": "5.3898"
+        },
+        {
+          "ref": "C",
+          "hsCode": "9503004100",
+          "originCountry": "CN",
+          "quantity": 1000,
+          "unitValue": "5.0000",
+          "currency": "USD",
+          "unitValueGbp": "3.9000",
+          "lineGoodsValueGbp": "3900.00",
+          "lineWeightKg": "500.000",
+          "lineVolumeCbm": "2.0000",
+          "chargeableWeight": "2.0000",
+          "tariffMeasureId": "tc8",
+          "dutyType": "AD_VALOREM",
+          "dutyRatePct": "8.0000",
+          "dutySpecific": null,
+          "preferenceClaimed": false,
+          "addRatePct": null,
+          "vatRatePct": "20.00",
+          "allocatedFreightGbp": "183.33",
+          "allocatedFreightToBorderGbp": "133.33",
+          "allocatedFreightPostBorderGbp": "50.00",
+          "allocatedOriginFeesGbp": "0.00",
+          "allocatedDestinationFeesGbp": "78.33",
+          "allocatedInsuranceGbp": "6.66",
+          "allocatedPlatformFeeGbp": "0.00",
+          "lineCustomsValueGbp": "4039.99",
+          "lineDutyGbp": "323.20",
+          "lineVatGbp": "898.30",
+          "supplierBorneDutyGbp": "0.00",
+          "supplierBorneVatGbp": "0.00",
+          "lineLandedCostExVatGbp": "4491.52",
+          "lineLandedCostGbp": "5389.82",
+          "landedCostPerUnit": "4.4915",
+          "landedCostPerUnitIncVat": "5.3898"
+        }
+      ]
+    }
+  }
+}

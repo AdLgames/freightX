@@ -1,0 +1,7 @@
+Country/Territories,Currency,Currency Code,Currency Units per £1,Start Date,End Date
+United States,Dollar,USD,1.2820,01/09/2026,30/09/2026
+Eurozone,Euro,EUR,1.1628,01/09/2026,30/09/2026
+China,Yuan,CNY,9.0909,01/09/2026,30/09/2026
+India,Rupee,INR,112.3596,01/09/2026,30/09/2026
+Turkey,Lira,TRY,52.6316,01/09/2026,30/09/2026
+Bad Row,,,,

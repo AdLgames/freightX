@@ -1,0 +1,138 @@
+# Harbour CI (engineering brief §7.6, §9).
+#
+# Hardening TODO: pin every `uses:` to a full commit SHA (e.g. `actions/checkout@<sha> # v4`)
+# once Renovate's `helpers:pinGitHubActionDigests` preset is switched on and has run. Major
+# tags are used for now so the file stays readable while the pipeline is still changing.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  NODE_ENV: test
+
+jobs:
+  checks:
+    name: Format, lint, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: harbour
+          POSTGRES_PASSWORD: harbour
+          POSTGRES_DB: harbour_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U harbour -d harbour_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Throw-away credentials for the ephemeral service containers above; nothing here is a secret.
+      DATABASE_URL: postgresql://harbour:harbour@localhost:5432/harbour_test?schema=public
+      REDIS_URL: redis://localhost:6379
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        # Version is read from the `packageManager` field in package.json.
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install (frozen lockfile, no lifecycle scripts — §7.6)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client
+        # Needs network access to binaries.prisma.sh for the query engine; fine on GitHub runners.
+        run: pnpm --filter @harbour/db run generate
+
+      - name: Build workspace packages
+        # engine/adapters/db export only ./dist, so the web and worker typecheck/lint need them built.
+        run: pnpm run build:packages
+
+      - name: Format check
+        run: pnpm run format:check
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Apply migrations to the test database
+        # `migrate deploy` only — never `db push` (brief §4 migration rules).
+        run: pnpm --filter @harbour/db exec prisma migrate deploy
+
+      - name: Test
+        run: pnpm run test
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Audit production dependencies (fail on high/critical — §7.6)
+        run: pnpm audit --audit-level=high --prod
+
+  gitleaks:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out (full history so every commit on the branch is scanned)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE is only required when this repository lives under a GitHub
+          # organisation account. Personal repositories scan without it. Leave the secret
+          # unset until an org licence key exists; the action fails clearly if it is needed.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_CONFIG: .gitleaks.toml

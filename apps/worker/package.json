@@ -1,0 +1,28 @@
+{
+  "name": "@harbour/worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BullMQ worker: HMRC/ECB FX refresh, nightly tariff cache re-warm, hourly quote expiry",
+  "type": "module",
+  "main": "./dist/main.js",
+  "bin": {
+    "harbour-worker": "./dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/main.js",
+    "once": "node dist/main.js --once"
+  },
+  "dependencies": {
+    "@harbour/adapters": "workspace:*",
+    "@harbour/engine": "workspace:*",
+    "bullmq": "^5.81.0",
+    "ioredis": "^5.9.0",
+    "zod": "^4.6.5"
+  }
+}

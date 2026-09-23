@@ -1,0 +1,765 @@
+{
+  "version": "RATE_SHEET_V1",
+  "currency": "GBP",
+  "issuedAt": "2026-09-23",
+  "validUntil": "2026-10-07",
+  "placeholder": true,
+  "sources": [
+    "PLACEHOLDER — to be refreshed from the Freightos Baltic Index (FBX) and at least two forwarder quotes per lane before public launch (§5.8)."
+  ],
+  "notes": [
+    "Rates are indicative GBP figures, excluding duty, VAT, insurance and platform fee.",
+    "SEA_LCL: rate.perCbm applies per weight-or-measure revenue ton (1 CBM or 1,000 kg, whichever is greater); rate.minimum applies.",
+    "SEA_FCL: per container; containers are inferred from volume (20ft ≤ 28 CBM, 40ft ≤ 58 CBM) unless specified.",
+    "AIR: rate.perKg applies to chargeable weight = max(actual kg, CBM × 1,000,000 / 6,000).",
+    "ukHaulage is the post-border leg (excluded from the customs value, included in the VAT base).",
+    "clearanceFee is customs brokerage (post-border).",
+    "Refresh cadence: fortnightly. Bump the version on every change; never edit a published version in place."
+  ],
+  "lanes": [
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNSHA",
+      "destination": "GBFXT",
+      "transitDays": 38,
+      "rate": {
+        "perCbm": "46.00",
+        "minimum": "92.00"
+      },
+      "originFees": {
+        "flat": "85.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNSHA",
+      "destination": "GBFXT",
+      "transitDays": 38,
+      "rate": {
+        "per20ft": "1650.00",
+        "per40ft": "2350.00"
+      },
+      "originFees": {
+        "per20ft": "180.00",
+        "per40ft": "210.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "450.00",
+        "per40ft": "520.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNSHA",
+      "destination": "GBSOU",
+      "transitDays": 39,
+      "rate": {
+        "perCbm": "46.00",
+        "minimum": "92.00"
+      },
+      "originFees": {
+        "flat": "85.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "155.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNSHA",
+      "destination": "GBSOU",
+      "transitDays": 39,
+      "rate": {
+        "per20ft": "1650.00",
+        "per40ft": "2350.00"
+      },
+      "originFees": {
+        "per20ft": "180.00",
+        "per40ft": "210.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "470.00",
+        "per40ft": "540.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNSHA",
+      "destination": "GBLGP",
+      "transitDays": 38,
+      "rate": {
+        "perCbm": "46.00",
+        "minimum": "92.00"
+      },
+      "originFees": {
+        "flat": "85.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNSHA",
+      "destination": "GBLGP",
+      "transitDays": 38,
+      "rate": {
+        "per20ft": "1650.00",
+        "per40ft": "2350.00"
+      },
+      "originFees": {
+        "per20ft": "180.00",
+        "per40ft": "210.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "440.00",
+        "per40ft": "510.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNNGB",
+      "destination": "GBFXT",
+      "transitDays": 38,
+      "rate": {
+        "perCbm": "45.00",
+        "minimum": "90.00"
+      },
+      "originFees": {
+        "flat": "85.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNNGB",
+      "destination": "GBFXT",
+      "transitDays": 38,
+      "rate": {
+        "per20ft": "1600.00",
+        "per40ft": "2300.00"
+      },
+      "originFees": {
+        "per20ft": "180.00",
+        "per40ft": "210.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "450.00",
+        "per40ft": "520.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNNGB",
+      "destination": "GBSOU",
+      "transitDays": 39,
+      "rate": {
+        "perCbm": "45.00",
+        "minimum": "90.00"
+      },
+      "originFees": {
+        "flat": "85.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "155.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNNGB",
+      "destination": "GBSOU",
+      "transitDays": 39,
+      "rate": {
+        "per20ft": "1600.00",
+        "per40ft": "2300.00"
+      },
+      "originFees": {
+        "per20ft": "180.00",
+        "per40ft": "210.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "470.00",
+        "per40ft": "540.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNNGB",
+      "destination": "GBLGP",
+      "transitDays": 38,
+      "rate": {
+        "perCbm": "45.00",
+        "minimum": "90.00"
+      },
+      "originFees": {
+        "flat": "85.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNNGB",
+      "destination": "GBLGP",
+      "transitDays": 38,
+      "rate": {
+        "per20ft": "1600.00",
+        "per40ft": "2300.00"
+      },
+      "originFees": {
+        "per20ft": "180.00",
+        "per40ft": "210.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "440.00",
+        "per40ft": "510.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNSZX",
+      "destination": "GBFXT",
+      "transitDays": 35,
+      "rate": {
+        "perCbm": "48.00",
+        "minimum": "96.00"
+      },
+      "originFees": {
+        "flat": "90.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNSZX",
+      "destination": "GBFXT",
+      "transitDays": 35,
+      "rate": {
+        "per20ft": "1700.00",
+        "per40ft": "2400.00"
+      },
+      "originFees": {
+        "per20ft": "190.00",
+        "per40ft": "220.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "450.00",
+        "per40ft": "520.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNSZX",
+      "destination": "GBSOU",
+      "transitDays": 36,
+      "rate": {
+        "perCbm": "48.00",
+        "minimum": "96.00"
+      },
+      "originFees": {
+        "flat": "90.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "155.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNSZX",
+      "destination": "GBSOU",
+      "transitDays": 36,
+      "rate": {
+        "per20ft": "1700.00",
+        "per40ft": "2400.00"
+      },
+      "originFees": {
+        "per20ft": "190.00",
+        "per40ft": "220.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "470.00",
+        "per40ft": "540.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "CNSZX",
+      "destination": "GBLGP",
+      "transitDays": 35,
+      "rate": {
+        "perCbm": "48.00",
+        "minimum": "96.00"
+      },
+      "originFees": {
+        "flat": "90.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "CNSZX",
+      "destination": "GBLGP",
+      "transitDays": 35,
+      "rate": {
+        "per20ft": "1700.00",
+        "per40ft": "2400.00"
+      },
+      "originFees": {
+        "per20ft": "190.00",
+        "per40ft": "220.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "440.00",
+        "per40ft": "510.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "INNSA",
+      "destination": "GBFXT",
+      "transitDays": 28,
+      "rate": {
+        "perCbm": "55.00",
+        "minimum": "110.00"
+      },
+      "originFees": {
+        "flat": "95.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "INNSA",
+      "destination": "GBFXT",
+      "transitDays": 28,
+      "rate": {
+        "per20ft": "1350.00",
+        "per40ft": "1950.00"
+      },
+      "originFees": {
+        "per20ft": "200.00",
+        "per40ft": "230.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "450.00",
+        "per40ft": "520.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "INNSA",
+      "destination": "GBSOU",
+      "transitDays": 29,
+      "rate": {
+        "perCbm": "55.00",
+        "minimum": "110.00"
+      },
+      "originFees": {
+        "flat": "95.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "155.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "INNSA",
+      "destination": "GBSOU",
+      "transitDays": 29,
+      "rate": {
+        "per20ft": "1350.00",
+        "per40ft": "1950.00"
+      },
+      "originFees": {
+        "per20ft": "200.00",
+        "per40ft": "230.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "470.00",
+        "per40ft": "540.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "INNSA",
+      "destination": "GBLGP",
+      "transitDays": 28,
+      "rate": {
+        "perCbm": "55.00",
+        "minimum": "110.00"
+      },
+      "originFees": {
+        "flat": "95.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "INNSA",
+      "destination": "GBLGP",
+      "transitDays": 28,
+      "rate": {
+        "per20ft": "1350.00",
+        "per40ft": "1950.00"
+      },
+      "originFees": {
+        "per20ft": "200.00",
+        "per40ft": "230.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "440.00",
+        "per40ft": "510.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "TRIST",
+      "destination": "GBFXT",
+      "transitDays": 14,
+      "rate": {
+        "perCbm": "70.00",
+        "minimum": "140.00"
+      },
+      "originFees": {
+        "flat": "70.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "TRIST",
+      "destination": "GBFXT",
+      "transitDays": 14,
+      "rate": {
+        "per20ft": "1100.00",
+        "per40ft": "1500.00"
+      },
+      "originFees": {
+        "per20ft": "150.00",
+        "per40ft": "170.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "450.00",
+        "per40ft": "520.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "TRIST",
+      "destination": "GBSOU",
+      "transitDays": 15,
+      "rate": {
+        "perCbm": "70.00",
+        "minimum": "140.00"
+      },
+      "originFees": {
+        "flat": "70.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "155.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "TRIST",
+      "destination": "GBSOU",
+      "transitDays": 15,
+      "rate": {
+        "per20ft": "1100.00",
+        "per40ft": "1500.00"
+      },
+      "originFees": {
+        "per20ft": "150.00",
+        "per40ft": "170.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "470.00",
+        "per40ft": "540.00"
+      }
+    },
+    {
+      "mode": "SEA_LCL",
+      "origin": "TRIST",
+      "destination": "GBLGP",
+      "transitDays": 14,
+      "rate": {
+        "perCbm": "70.00",
+        "minimum": "140.00"
+      },
+      "originFees": {
+        "flat": "70.00"
+      },
+      "destinationFees": {
+        "flat": "120.00",
+        "perCbm": "12.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "150.00"
+      }
+    },
+    {
+      "mode": "SEA_FCL",
+      "origin": "TRIST",
+      "destination": "GBLGP",
+      "transitDays": 14,
+      "rate": {
+        "per20ft": "1100.00",
+        "per40ft": "1500.00"
+      },
+      "originFees": {
+        "per20ft": "150.00",
+        "per40ft": "170.00"
+      },
+      "destinationFees": {
+        "per20ft": "250.00",
+        "per40ft": "300.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "per20ft": "440.00",
+        "per40ft": "510.00"
+      }
+    },
+    {
+      "mode": "AIR",
+      "origin": "CNPVG",
+      "destination": "GBLHR",
+      "transitDays": 5,
+      "rate": {
+        "perKg": "3.20",
+        "minimum": "150.00"
+      },
+      "originFees": {
+        "flat": "60.00"
+      },
+      "destinationFees": {
+        "perKg": "0.35",
+        "minimum": "45.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "95.00"
+      }
+    },
+    {
+      "mode": "AIR",
+      "origin": "CNSZX",
+      "destination": "GBLHR",
+      "transitDays": 5,
+      "rate": {
+        "perKg": "3.30",
+        "minimum": "150.00"
+      },
+      "originFees": {
+        "flat": "60.00"
+      },
+      "destinationFees": {
+        "perKg": "0.35",
+        "minimum": "45.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "95.00"
+      }
+    },
+    {
+      "mode": "AIR",
+      "origin": "INBOM",
+      "destination": "GBLHR",
+      "transitDays": 4,
+      "rate": {
+        "perKg": "2.80",
+        "minimum": "150.00"
+      },
+      "originFees": {
+        "flat": "55.00"
+      },
+      "destinationFees": {
+        "perKg": "0.35",
+        "minimum": "45.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "95.00"
+      }
+    },
+    {
+      "mode": "AIR",
+      "origin": "TRIST",
+      "destination": "GBLHR",
+      "transitDays": 3,
+      "rate": {
+        "perKg": "2.20",
+        "minimum": "150.00"
+      },
+      "originFees": {
+        "flat": "45.00"
+      },
+      "destinationFees": {
+        "perKg": "0.35",
+        "minimum": "45.00"
+      },
+      "clearanceFee": "55.00",
+      "ukHaulage": {
+        "flat": "95.00"
+      }
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+# @harbour/worker
+
+Background jobs for Harbour (engineering brief §3, §5.7, §5.8, §7.8, §11 item 4): BullMQ on Redis,
+one queue per job. The request path never calls a tariff or FX provider; these jobs are the only
+writers of `FxRate` and the nightly re-warmers of `TariffCache`.
+
+## Jobs
+
+| Queue            | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Schedule (UTC)                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| `fx-refresh`     | Fetches this month's HMRC monthly CSV and, from the 25th, next month's (HMRC publishes ~1 week before the month starts; a 404 for next month before that is expected, not an alert). Parses and upserts on `(source, currency, validFrom)`. On the 2nd or later, if the current month's HMRC rates are still absent it raises **critical `FX_HMRC_MISSING`**. Then fetches ECB daily reference rates as fallback data (valid 7 days). 5s timeout, 2 retries with jitter per request. | `0 6 * * *` daily, plus `0 7 1,25 * *` (§5.7) |
+| `tariff-refresh` | Re-warms the tariff cache for every active commodity code through `UkTradeTariffClient` (≤ 5 concurrent, 100 ms between starts). Entries older than an hour are refetched (`refreshingCacheView`). Summarises ok / notFound / unavailable; raises **warning `TARIFF_REFRESH_DEGRADED`** if more than 20 % of codes were unavailable.                                                                                                                                                 | `0 2 * * *` nightly                           |
+| `quote-expiry`   | Calls `QuoteExpiryPort.expireQuotesPastValidUntil(now)`: moves `READY`, `INDICATIVE` and `DRAFT` quotes past `validUntil` to `EXPIRED`. **Never touches `ACCEPTED`** (immutable, §5.9) nor `CANCELLED`/`EXPIRED` rows. Returns the count.                                                                                                                                                                                                                                            | `0 * * * *` hourly (§5.8)                     |
+
+Job options on every scheduler: `attempts: 5`, exponential backoff from 30 s, `removeOnComplete: 100`,
+`removeOnFail: 500`. Schedulers are registered with `Queue.upsertJobScheduler` on every boot under
+stable ids (`fx-refresh:daily`, `fx-refresh:hmrc-publication`, `tariff-refresh:nightly`,
+`quote-expiry:hourly`), so restarts are idempotent and changing a cron string updates it in place.
+
+The FX schedule is deliberately simple: the job logic decides what is due (which months, whether
+"missing by the 2nd" applies), so running it more often is harmless.
+
+### Failure semantics
+
+- Provider errors (HTTP 5xx, timeouts, network, format changes) **never throw**. They are reported
+  through the `AlertSink` and in the job summary; the next scheduled run tries again.
+- Store (database) errors **do throw**, so BullMQ retries with backoff and, after the 5th failure,
+  the worker raises **critical `JOB_FAILED`**.
+- Alert codes: `FX_HMRC_MISSING` (critical), `FX_HMRC_FETCH_FAILED`, `FX_HMRC_PARSE_FAILED`,
+  `FX_ECB_FETCH_FAILED`, `FX_ECB_PARSE_FAILED`, `TARIFF_REFRESH_DEGRADED` (warning),
+  `JOB_FAILED` (critical). A parse failure means the upstream format changed: a code change, not an
+  ops action.
+
+## Environment
+
+| Variable                   | Required              | Meaning                                                                                                                                                                                                 |
+| -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`                | yes (except `--once`) | Redis connection string for BullMQ, e.g. `redis://localhost:6379`. The connection is created with `maxRetriesPerRequest: null`.                                                                         |
+| `ALERT_WEBHOOK_URL`        | no                    | If set, alerts are also POSTed as JSON (`{source, level, code, message, meta, at}`) with a 5 s timeout. Delivery failures are logged, never thrown. Wire PagerDuty / OpsGenie / Slack behind it (§7.8). |
+| `WORKER_PORT`              | no (default `9090`)   | Port for `GET /healthz`, which returns `{ ok, startedAt, queues: [{ name, lastRun }] }` with the last completed/failed run per queue.                                                                   |
+| `TARIFF_REFRESH_CODES`     | no                    | Phase 0: comma-separated 10-digit commodity codes to re-warm nightly. Phase 1 replaces this with every `Product.hsCode` in the DB (see `wiring.server.ts`).                                             |
+| `UK_TRADE_TARIFF_BASE_URL` | no                    | Override the UK Trade Tariff API base URL (tests, recorded fixtures).                                                                                                                                   |
+
+Alerts always go to stdout as structured JSON (`{"event":"alert",...}`) in addition to the webhook.
+
+## Running
+
+```sh
+pnpm --filter @harbour/worker run build
+REDIS_URL=redis://localhost:6379 node apps/worker/dist/main.js      # long-running worker
+curl localhost:9090/healthz
+```
+
+Run one job inline, without Redis (local dev, and the runbook's "re-run the job" step):
+
+```sh
+node apps/worker/dist/main.js --once fx-refresh
+node apps/worker/dist/main.js --once tariff-refresh     # uses TARIFF_REFRESH_CODES
+node apps/worker/dist/main.js --once quote-expiry
+# or: pnpm --filter @harbour/worker run once -- fx-refresh
+```
+
+`--once` prints `job.started` / `job.completed` (with the summary) as JSON and exits 0, or
+`job.failed` and exits 1. SIGTERM/SIGINT close the workers, the health server and the Redis
+connection (30 s hard limit).
+
+Logs are one JSON object per line: `job.started`, `job.completed` (`summary` = counts, months,
+timestamps), `job.failed` (`errorName`, `errorMessage`, attempt), `alert`, `scheduler.registered`,
+`worker.started` / `worker.stopping` / `worker.stopped`. No PII is logged; provider payloads contain
+none.
+
+## Persistence ports
+
+The jobs depend only on the small interfaces in `src/ports.ts` (`FxRateStore` from
+`@harbour/adapters`, `QuoteExpiryPort`, `HsCodeSource`, `AlertSink`). `src/wiring.server.ts` is the
+composition root and currently wires the in-memory implementations; the `TODO(db)` block there says
+what each Prisma-backed implementation must do once `@harbour/db` ships.
+
+## Tests
+
+```sh
+pnpm --filter @harbour/worker run test
+REDIS_URL=redis://localhost:6379 pnpm --filter @harbour/worker run test   # also runs the BullMQ integration test
+```
+
+Unit tests use an injected fake `fetch`, a fixed clock and the fixtures in
+`packages/adapters/fixtures/fx`; nothing touches the network or Redis. The integration test
+(`test/redis.integration.test.ts`) is skipped unless `REDIS_URL` is set (CI sets it).
+
+## Runbook
+
+Alerts from this worker are handled by
+[`docs/runbooks/tariff-or-fx-job-failed.md`](../../docs/runbooks/tariff-or-fx-job-failed.md).
+The runbook refers to the jobs as `fx.hmrc-monthly`, `fx.ecb-daily` and `tariff.refresh`; they
+map to the `fx-refresh` (both FX sources, one run) and `tariff-refresh` queues here. Circuit
+breaker incidents: [`docs/runbooks/circuit-breaker-open.md`](../../docs/runbooks/circuit-breaker-open.md).
