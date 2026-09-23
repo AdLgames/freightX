@@ -1,6 +1,6 @@
 # Runbook: tariff or FX job failed
 
-Alert sources: the worker's `fx.hmrc-monthly`, `fx.ecb-daily` and `tariff.refresh` jobs
+Alert sources: the worker's `fx-refresh` (HMRC monthly + ECB daily) and `tariff-refresh` queues
 (BullMQ), and the "HMRC monthly FX missing by the 2nd" check.
 
 Impact if ignored: quotes fall back to ECB rates with `FX_FALLBACK` (still `READY`), or, if
@@ -32,13 +32,12 @@ The engine reads `FxRate` rows; the worker normally writes them. Until the job s
    environment (never pasted into a shell history file):
 
    ```sh
-   pnpm --filter @harbour/worker run fx:seed -- \
-     --source HMRC_MONTHLY --valid-from <YYYY-MM-01> --valid-to <YYYY-MM-last> \
-     --file <path to downloaded rates file>
+   # Re-run the fetch inline first (no Redis needed):
+   pnpm --filter @harbour/worker run once -- fx-refresh
    ```
 
-   The script is idempotent on `(source, currency, validFrom)` and prints the rows it wrote.
-   If the script does not exist yet, insert rows directly with a reviewed SQL script that sets
+   A dedicated `fx:seed` script (idempotent on `(source, currency, validFrom)`, taking a
+   downloaded HMRC file) is not built yet. Until it exists, insert rows directly with a reviewed SQL script that sets
    `source`, `currency`, `rateToGbp` (6 dp), `validFrom`, `validTo`; keep the script in the
    incident record.
 

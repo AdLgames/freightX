@@ -37,8 +37,8 @@ share of `INDICATIVE` quotes.
   `rateSource = RATE_SHEET_Vn`). If it is older than a fortnight, refresh it via the normal
   PR path; the fallback is only as good as the sheet.
 - Tariff API: if the outage will exceed the cache TTL, warm the cache for the top commodities
-  as soon as half-open probes succeed (`pnpm --filter @harbour/worker run tariff:warm`, or the
-  equivalent queue job). Consider temporarily extending `TariffCache` TTL via config (not
+  as soon as half-open probes succeed (`pnpm --filter @harbour/worker run once -- tariff-refresh`, or wait
+  for the nightly `tariff-refresh` job). Consider temporarily extending `TariffCache` TTL via config (not
   code) if the API is known to be down for a planned period.
 - Forwarder: the outbox retries automatically; watch DLQ depth. Do not replay DLQ jobs while
   the breaker is open.
