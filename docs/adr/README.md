@@ -19,6 +19,7 @@ accepted; a change of mind gets a new ADR that supersedes the old one.
 | [0010](0010-sailing-schedules-read-only.md)                       | Sailing schedules: read-only visibility before booking         | Proposed | 2026-09-23 |
 | [0011](0011-valuation-additions-and-duty-payment-routing.md)      | Valuation additions and duty payment routing                   | Proposed | 2026-09-23 |
 | [0012](0012-supplier-legal-vs-physical-and-payments-readiness.md) | Supplier legal vs physical entity; payments readiness          | Proposed | 2026-09-23 |
+| [0013](0013-purchase-orders-and-cost-actuals.md)                  | Purchase orders and estimate-to-actual reconciliation          | Proposed | 2026-09-23 |
 
 "Proposed" ADRs record what the code does today but await confirmation from the founder or the
 customs practitioner (see `docs/decisions-needed.md`).
