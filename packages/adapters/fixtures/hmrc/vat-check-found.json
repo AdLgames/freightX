@@ -1,0 +1,13 @@
+{
+  "_comment": "HAND-AUTHORED SAMPLE in the documented HMRC 'Check a UK VAT number' API shape (GET /organisations/vat/check-vat-number/lookup/{vrn}, Accept: application/vnd.hmrc.1.0+json). Not a live recording. The VRN is a placeholder that passes the modulus-97 check digit.",
+  "target": {
+    "name": "SAMPLE IMPORTER LTD",
+    "vatNumber": "123456782",
+    "address": {
+      "line1": "1 Example Street",
+      "postcode": "EC1A 1AA",
+      "countryCode": "GB"
+    }
+  },
+  "processingDate": "2026-09-23T10:15:30+01:00"
+}

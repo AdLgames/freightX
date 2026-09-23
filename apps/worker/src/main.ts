@@ -20,6 +20,9 @@ import {
   type QueueName,
 } from './queues.js';
 import { buildWiring, readEnv, type JobSummary } from './wiring.server.js';
+// M6
+import { STRIPE_EVENTS_QUEUE } from './jobs/stripe-events.js';
+// end M6
 
 interface LastRun {
   at: string;
@@ -35,14 +38,29 @@ export interface HealthReport {
   queues: Array<{ name: QueueName; lastRun: LastRun | null }>;
 }
 
-const parseArgs = (argv: readonly string[]): { once?: string } => {
+/**
+ * `--once <queue> [--data '<json>' | '<json>']`: run one job inline without Redis. The payload is
+ * optional and only on-demand jobs read it (M5 document-scan; M2 eori-verify / vat-verify).
+ * Both spellings are accepted: `--data` (M2) or a positional JSON argument (M5).
+ */
+const parseArgs = (argv: readonly string[]): { once?: string; data?: unknown } => {
   const i = argv.indexOf('--once');
   if (i < 0) return {};
   const value = argv[i + 1];
-  return { once: value ?? '' };
+  const d = argv.indexOf('--data');
+  const raw = d >= 0 ? argv[d + 1] : argv[i + 2]?.startsWith('--') ? undefined : argv[i + 2];
+  let data: unknown;
+  if (raw !== undefined) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = undefined;
+    }
+  }
+  return { once: value ?? '', ...(data === undefined ? {} : { data }) };
 };
 
-const runOnce = async (queueName: string): Promise<number> => {
+const runOnce = async (queueName: string, data?: unknown): Promise<number> => {
   if (!isQueueName(queueName)) {
     process.stderr.write(
       `Unknown queue "${queueName}". Expected one of: ${QUEUE_NAMES.join(', ')}\n`,
@@ -53,7 +71,7 @@ const runOnce = async (queueName: string): Promise<number> => {
   const wiring = buildWiring(env);
   log('job.started', { queue: queueName, mode: 'once' });
   try {
-    const summary = await wiring.runJob(queueName);
+    const summary = await wiring.runJob(queueName, data); // M5/M2: payload for on-demand jobs
     log('job.completed', { queue: queueName, mode: 'once', summary });
     return 0;
   } catch (err) {
@@ -86,7 +104,9 @@ const startWorker = async (): Promise<void> => {
   if (!env.REDIS_URL) {
     process.stderr.write(
       'REDIS_URL is not set. The worker needs Redis for BullMQ (e.g. redis://localhost:6379).\n' +
-        'To run a single job without Redis use: node dist/main.js --once <fx-refresh|tariff-refresh|quote-expiry>\n',
+        'To run a single job without Redis use: node dist/main.js --once <fx-refresh|tariff-refresh|quote-expiry>\n' +
+        // M5
+        '  (document-scan takes the payload as JSON: --once document-scan \'{"documentId":"…","organizationId":"…"}\')\n',
     );
     process.exit(1);
   }
@@ -118,7 +138,7 @@ const startWorker = async (): Promise<void> => {
           jobName: job.name,
           attempt: job.attemptsMade + 1,
         });
-        return wiring.runJob(name);
+        return wiring.runJob(name, job.data); // M5/M2: on-demand queues read the job data
       },
       { connection, concurrency: 1 },
     );
@@ -158,6 +178,52 @@ const startWorker = async (): Promise<void> => {
     workers.push(worker);
   }
 
+  // M6: opt-in consumer for the event-driven stripe-events queue (no scheduler: the web app's
+  // POST /webhooks/stripe enqueues). Off by default because the web app consumes it today.
+  if (env.STRIPE_EVENTS_CONSUMER === 'worker') {
+    const stripeWorker = new Worker(
+      STRIPE_EVENTS_QUEUE,
+      async (job: Job) => {
+        log('job.started', {
+          queue: STRIPE_EVENTS_QUEUE,
+          jobId: job.id,
+          jobName: job.name,
+          attempt: job.attemptsMade + 1,
+        });
+        return wiring.runStripeEvent(job.data);
+      },
+      { connection, concurrency: 1 },
+    );
+    stripeWorker.on('completed', (job, result) => {
+      log('job.completed', { queue: STRIPE_EVENTS_QUEUE, jobId: job.id, summary: result });
+    });
+    stripeWorker.on('failed', (job, err) => {
+      const attempt = job?.attemptsMade ?? 0;
+      const attempts = job?.opts.attempts ?? 1;
+      log('job.failed', {
+        queue: STRIPE_EVENTS_QUEUE,
+        jobId: job?.id,
+        attempt,
+        attempts,
+        ...errorFields(err),
+      });
+      if (attempt >= attempts) {
+        void wiring.ports.alerts.alert(
+          'critical',
+          'STRIPE_EVENT_DEAD_LETTERED',
+          `stripe-events job exhausted its ${attempts} attempts`,
+          { queue: STRIPE_EVENTS_QUEUE, jobId: job?.id, error: err.message },
+        );
+      }
+    });
+    stripeWorker.on('error', (err) =>
+      log('worker.error', { queue: STRIPE_EVENTS_QUEUE, ...errorFields(err) }),
+    );
+    workers.push(stripeWorker);
+    log('worker.stripe_events_consumer', { queue: STRIPE_EVENTS_QUEUE });
+  }
+  // end M6
+
   const report = (): HealthReport => ({
     ok: true,
     startedAt,
@@ -195,7 +261,7 @@ const startWorker = async (): Promise<void> => {
 const main = async (): Promise<void> => {
   const args = parseArgs(process.argv.slice(2));
   if (args.once !== undefined) {
-    process.exitCode = await runOnce(args.once);
+    process.exitCode = await runOnce(args.once, args.data); // M5/M2: optional payload
     return;
   }
   await startWorker();

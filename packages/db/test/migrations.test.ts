@@ -57,6 +57,7 @@ describe('schema ↔ allow-lists', () => {
         'audit_logs',
         'customs_profiles',
         'documents',
+        'invitations', // M2
         'memberships',
         'organizations',
         'outbox_events',
@@ -66,6 +67,10 @@ describe('schema ↔ allow-lists', () => {
         'shipment_events',
         'shipments',
         'suppliers',
+        // M3 (ADR-0012)
+        'pickup_locations',
+        'payment_terms',
+        'payout_methods',
       ].sort(),
     );
   });
@@ -246,5 +251,140 @@ describe('0003_customs_profile_and_quote_1_1', () => {
       expect(handWritten).toContain(`DROP TRIGGER IF EXISTS ${m[1]} ON "${m[2]}";`);
     }
     expect(handWritten).not.toMatch(/CREATE FUNCTION/); // only CREATE OR REPLACE
+  });
+});
+
+// M6
+describe('0006_billing', () => {
+  const sql = readMigration('0006_billing');
+  const [, handWritten = ''] = sql.split('Part 2 — hand-written');
+
+  it('adds the subscription_status enum, the organisation columns and stripe_events additively', () => {
+    expect(sql).toContain(
+      `CREATE TYPE "subscription_status" AS ENUM ('NONE', 'TRIALING', 'ACTIVE', 'PAST_DUE', 'CANCELED', 'UNPAID', 'INCOMPLETE', 'PAUSED');`,
+    );
+    expect(sql).toContain(`"subscription_status" "subscription_status" NOT NULL DEFAULT 'NONE'`);
+    expect(sql).toContain('"cancel_at_period_end" BOOLEAN NOT NULL DEFAULT false');
+    for (const col of [
+      'billing_email',
+      'current_period_end',
+      'plan_updated_at',
+      'stripe_subscription_id',
+    ]) {
+      expect(sql).toMatch(new RegExp(`ADD COLUMN\\s+"${col}"`));
+    }
+    expect(sql).toContain('CREATE TABLE "stripe_events"');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "organizations_stripe_subscription_id_key" ON "organizations"("stripe_subscription_id");',
+    );
+    const statements = sql.replace(/--[^\n]*/g, '');
+    expect(statements).not.toMatch(/\bDROP (COLUMN|TABLE|TYPE)\b/);
+    expect(statements).not.toMatch(/\bRENAME\b|ALTER COLUMN/);
+  });
+
+  it('stripe_events is a pass-through table: no RLS, granted to harbour_app; billing_email lower-cased', () => {
+    expect(PASSTHROUGH_MODELS).toContain('StripeEvent');
+    expect(sql).not.toContain('ALTER TABLE "stripe_events" ENABLE ROW LEVEL SECURITY');
+    expect(handWritten).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "stripe_events" TO harbour_app;',
+    );
+    expect(handWritten).toContain(
+      'CHECK (billing_email IS NULL OR billing_email = lower(billing_email))',
+    );
+    for (const m of handWritten.matchAll(/ADD CONSTRAINT (\w+)/g)) {
+      expect(handWritten).toContain(`DROP CONSTRAINT IF EXISTS ${m[1]};`);
+    }
+  });
+
+  it('carries the rollback note', () => {
+    expect(sql).toMatch(/## Rollback/);
+    expect(sql).toMatch(/Reversible: yes/);
+  });
+});
+// end M6
+// M3 (ADR-0012)
+describe('0007_supplier_entities', () => {
+  const sql = readMigration('0007_supplier_entities');
+  const [generated = '', handWritten = ''] = sql.split('Part 2 — hand-written');
+
+  it('adds the four enums, the supplier legal-entity columns (backfilled) and the product columns additively', () => {
+    expect(sql).toContain(
+      `CREATE TYPE "payment_term_type" AS ENUM ('PREPAID', 'NET', 'DEPOSIT_BALANCE');`,
+    );
+    expect(sql).toContain(
+      `CREATE TYPE "balance_trigger" AS ENUM ('ON_SHIPMENT', 'AGAINST_BILL_OF_LADING', 'ON_ARRIVAL');`,
+    );
+    expect(sql).toContain(`CREATE TYPE "payout_partner" AS ENUM ('AIRWALLEX');`);
+    expect(sql).toContain(`CREATE TYPE "payout_method_type" AS ENUM ('LOCAL', 'SWIFT');`);
+    // NOT NULL columns on an existing table are added nullable, backfilled, then constrained.
+    expect(generated).toMatch(/ADD COLUMN\s+"legal_name" TEXT,/);
+    expect(generated).toContain(
+      `UPDATE "suppliers" SET "legal_name" = "name" WHERE "legal_name" IS NULL;`,
+    );
+    expect(generated).toContain(
+      `UPDATE "suppliers" SET "country_of_incorporation" = "country_code" WHERE "country_of_incorporation" IS NULL;`,
+    );
+    expect(generated).toContain(`ALTER TABLE "suppliers" ALTER COLUMN "legal_name" SET NOT NULL;`);
+    expect(generated).toContain(
+      `ALTER TABLE "suppliers" ALTER COLUMN "country_of_incorporation" SET NOT NULL;`,
+    );
+    for (const col of ['carton_length_cm', 'carton_width_cm', 'carton_height_cm']) {
+      expect(generated).toMatch(new RegExp(`"${col}" DECIMAL\\(8,2\\)`));
+    }
+    expect(generated).toContain('"preference_eligible" BOOLEAN NOT NULL DEFAULT false');
+    expect(generated).toMatch(/ALTER TABLE "products" ADD COLUMN\s+"archived_at" TIMESTAMP\(3\)/);
+    // Additive only: nothing dropped, renamed or narrowed (comments — the rollback note — aside).
+    const statements = sql.replace(/--[^\n]*/g, '');
+    expect(statements).not.toMatch(/\bDROP (COLUMN|TABLE|TYPE)\b/);
+    expect(statements).not.toMatch(/\bRENAME\b/);
+    expect(statements).not.toMatch(/ALTER COLUMN "(?!legal_name|country_of_incorporation)/);
+  });
+
+  it('creates the three supplier sub-entity tables with composite FKs to (supplier_id, organization_id)', () => {
+    for (const table of ['pickup_locations', 'payment_terms', 'payout_methods']) {
+      expect(generated).toContain(`CREATE TABLE "${table}"`);
+      expect(generated).toContain(
+        `ALTER TABLE "${table}" ADD CONSTRAINT "${table}_supplier_id_organization_id_fkey" FOREIGN KEY ("supplier_id", "organization_id") REFERENCES "suppliers"("id", "organization_id") ON DELETE CASCADE ON UPDATE CASCADE;`,
+      );
+    }
+    expect(generated).toContain(
+      `CREATE UNIQUE INDEX "payment_terms_supplier_id_key" ON "payment_terms"("supplier_id");`,
+    );
+  });
+
+  it('installs the CHECKs, the one-default-per-supplier partial index, RLS and grants', () => {
+    expect(handWritten).toContain(`CHECK (closest_port_code ~ '^[A-Z]{2}[A-Z0-9]{3}$')`);
+    expect(handWritten).toMatch(
+      /CREATE UNIQUE INDEX pickup_locations_one_default_per_supplier\s+ON "pickup_locations" \("supplier_id"\) WHERE is_default;/,
+    );
+    expect(handWritten).toContain(
+      'CHECK (deposit_pct IS NULL OR (deposit_pct >= 0 AND deposit_pct <= 100))',
+    );
+    expect(handWritten).toContain('CHECK (net_days IS NULL OR net_days >= 0)');
+    expect(handWritten).toContain(
+      "CHECK (term_type <> 'DEPOSIT_BALANCE' OR (deposit_pct IS NOT NULL AND balance_trigger IS NOT NULL))",
+    );
+    expect(handWritten).toContain("CHECK (term_type <> 'NET' OR net_days IS NOT NULL)");
+    // §7.3: never more than a masked suffix of an account identifier.
+    expect(handWritten).toContain(
+      `CHECK (account_last4 IS NULL OR account_last4 ~ '^[0-9A-Za-z]{1,4}$')`,
+    );
+    for (const table of ['pickup_locations', 'payment_terms', 'payout_methods']) {
+      expect(handWritten).toContain(
+        `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "${table}" TO harbour_app;`,
+      );
+    }
+  });
+
+  it('the hand-written part is idempotent', () => {
+    for (const m of handWritten.matchAll(/ADD CONSTRAINT (\w+)/g)) {
+      expect(handWritten).toContain(`DROP CONSTRAINT IF EXISTS ${m[1]};`);
+    }
+    for (const m of handWritten.matchAll(/CREATE POLICY (\w+) ON "(\w+)"/g)) {
+      expect(handWritten).toContain(`DROP POLICY IF EXISTS ${m[1]} ON "${m[2]}";`);
+    }
+    for (const m of handWritten.matchAll(/CREATE UNIQUE INDEX (\w+)/g)) {
+      expect(handWritten).toContain(`DROP INDEX IF EXISTS ${m[1]};`);
+    }
   });
 });

@@ -34,6 +34,8 @@ export const sessionDataSchema = z.object({
   /** Role in `currentOrgId` when it was last checked; a change triggers rotation (§7.1). */
   role: z.enum(ROLES).nullable(),
   csrfToken: z.string().regex(TOKEN_RE),
+  /** M2: `users.session_epoch` when the session was started; a bump invalidates the session (auth.server.ts). */
+  epoch: z.number().int().nonnegative().default(0),
   createdAt: z.number().int().nonnegative(),
   lastSeenAt: z.number().int().nonnegative(),
   rotatedAt: z.number().int().nonnegative(),
@@ -149,10 +151,13 @@ export class SessionManager {
   }
 
   /** New session for a freshly signed-in user (always a new id: sign-in rotates). */
-  async create(init: Pick<SessionData, 'userId' | 'currentOrgId' | 'role'>): Promise<Session> {
+  async create(
+    init: Pick<SessionData, 'userId' | 'currentOrgId' | 'role'> & { epoch?: number }, // M2: epoch
+  ): Promise<Session> {
     const t = this.now();
     const data: SessionData = {
       ...init,
+      epoch: init.epoch ?? 0, // M2
       csrfToken: randomToken(),
       createdAt: t,
       lastSeenAt: t,

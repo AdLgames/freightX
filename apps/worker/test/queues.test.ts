@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_JOB_OPTIONS,
+  ON_DEMAND_QUEUE_NAMES, // M2
   QUEUE_NAMES,
   SCHEDULES,
   isQueueName,
@@ -65,6 +66,12 @@ describe('scheduleRepeatables', () => {
 
   it('every queue has at least one schedule with a stable, queue-prefixed id', () => {
     for (const name of QUEUE_NAMES) {
+      // M5: document-scan is on demand (enqueued per upload by the web app), never repeatable.
+      if (name === 'document-scan') {
+        expect(SCHEDULES[name]).toEqual([]);
+        continue;
+      }
+      if ((ON_DEMAND_QUEUE_NAMES as readonly string[]).includes(name)) continue; // M2: no cron
       expect(SCHEDULES[name].length).toBeGreaterThan(0);
       for (const s of SCHEDULES[name]) expect(s.id.startsWith(`${name}:`)).toBe(true);
     }

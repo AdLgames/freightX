@@ -294,6 +294,7 @@ describe.skipIf(!DATABASE_URL)('tenancy-aware loaders (database)', () => {
         '/app',
         '/app/quotes',
         '/app/products',
+        '/app/suppliers', // M3
         '/app/documents',
         '/app/settings',
       ]);

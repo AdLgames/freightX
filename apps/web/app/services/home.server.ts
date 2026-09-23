@@ -37,3 +37,38 @@ export const homeActions = (input: HomeActionInput): ActionItem[] => {
   }
   return items;
 };
+
+// ---------- Home stat cards and recent drafts (docs/design-system.md, "Home") ----------
+
+import { D, sum } from '@harbour/engine';
+
+export interface HomeStatsInput {
+  activeShipments: number;
+  /** `totalLandedCostExVat` of READY/ACCEPTED quotes created this month, decimal strings. */
+  monthQuoteTotals: readonly string[];
+  draftQuotes: number;
+}
+
+export interface HomeStats {
+  activeShipments: number;
+  estimatedLandedCostGbp: string;
+  draftQuotes: number;
+}
+
+export const homeStats = (input: HomeStatsInput): HomeStats => ({
+  activeShipments: input.activeShipments,
+  estimatedLandedCostGbp: sum(input.monthQuoteTotals.map((t) => D(t))).toFixed(2),
+  draftQuotes: input.draftQuotes,
+});
+
+export interface RecentDraft {
+  id: string;
+  route: string;
+  mode: string;
+  updatedAt: string;
+  totalExVatGbp: string;
+}
+
+/** Start of the current month in UTC — quotes created from here count towards "this month". */
+export const startOfMonthUtc = (now: Date): Date =>
+  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));

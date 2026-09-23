@@ -16,6 +16,15 @@ export const ACTIONS = [
   'shipment.book',
   'billing.manage',
   'member.manage',
+  // M3: products, suppliers, pickup locations, payment terms (same roles as quote.edit; the
+  // brief's matrix has no catalogue row, so this mirrors "create/edit quotes")
+  'catalogue.edit',
+  // M5: document vault
+  'doc.verify', // mark a scanned document as checked by a person (OWNER/ADMIN)
+  // M2 — settings additions (not in the brief's table): Companies House confirmation (ADR-0015)
+  // and the audit-log view are OWNER/ADMIN, like the other organisation settings.
+  'org.company.confirm',
+  'audit.view',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -33,6 +42,12 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   'shipment.book': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'billing.manage': { OWNER: true, ADMIN: false, MEMBER: false, VIEWER: false },
   'member.manage': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  'catalogue.edit': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false }, // M3
+  // M5: document vault (verification is an admin act, like accepting a quote)
+  'doc.verify': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  // M2
+  'org.company.confirm': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  'audit.view': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
 };
 
 export class ForbiddenError extends Error {

@@ -1,5 +1,6 @@
+import { storageEnvSchema } from '@harbour/adapters'; // M5
 import { z } from 'zod';
-import { decimalString } from '../validators/common';
+import { decimalString, eori, safeString } from '../validators/common'; // M2: eori, safeString
 import type { CalculatorMode } from '../validators/calculator';
 import { parseLogLevel } from './logger.server';
 
@@ -72,6 +73,33 @@ const envSchema = z
     INLAND_VAT_ADJUSTMENT_LCL_GBP: gbpEnv.optional(),
     INLAND_VAT_ADJUSTMENT_FCL_GBP: gbpEnv.optional(),
     INLAND_VAT_ADJUSTMENT_AIR_GBP: gbpEnv.optional(),
+    // M6: Stripe Billing (services/billing/). All optional: unset → the billing page says
+    // "Billing is not configured" and nothing else changes. Secrets are never logged. Plan names
+    // and prices live in Stripe; the two price ids are the only link between a Stripe price and
+    // our Plan enum (STARTER / PRO).
+    STRIPE_SECRET_KEY: z.string().min(1).max(1024).optional(),
+    STRIPE_WEBHOOK_SECRET: z.string().min(1).max(1024).optional(),
+    STRIPE_PRICE_STARTER: z
+      .string()
+      .regex(/^price_[A-Za-z0-9]+$/, 'STRIPE_PRICE_STARTER must be a Stripe price id (price_…).')
+      .optional(),
+    STRIPE_PRICE_PRO: z
+      .string()
+      .regex(/^price_[A-Za-z0-9]+$/, 'STRIPE_PRICE_PRO must be a Stripe price id (price_…).')
+      .optional(),
+    // end M6
+    // M5: document vault — object storage (STORAGE_*: S3/R2, or a local directory outside
+    // production) and the ClamAV daemon (CLAMD_*). Schema shared with the worker via @harbour/adapters.
+    ...storageEnvSchema.shape,
+    // M2 — settings (apps/web/README.md "Settings (M2)"). All optional; production without
+    // FIELD_ENCRYPTION_KEY closes the workspace (§7.3), never the calculator.
+    /** 32 random bytes, base64 — the field-encryption master key (packages/db crypto.ts). Never logged. */
+    FIELD_ENCRYPTION_KEY: z.string().min(1).max(200).optional(),
+    /** Companies House Public Data API key (HTTP Basic username). Unset → company lookup off. */
+    COMPANIES_HOUSE_API_KEY: z.string().min(1).max(200).optional(),
+    /** The forwarding partner's EORI and name shown in the CDS authorisation step; unset → "to be confirmed". */
+    FORWARDER_EORI: eori.optional(),
+    FORWARDER_NAME: safeString(120).optional(),
   })
   .refine(
     (e) => (e.TRADE_TARIFF_API_KEY === undefined) === (e.TRADE_TARIFF_API_KEY_HEADER === undefined),
@@ -108,6 +136,28 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     INLAND_VAT_ADJUSTMENT_LCL_GBP: blank(source.INLAND_VAT_ADJUSTMENT_LCL_GBP),
     INLAND_VAT_ADJUSTMENT_FCL_GBP: blank(source.INLAND_VAT_ADJUSTMENT_FCL_GBP),
     INLAND_VAT_ADJUSTMENT_AIR_GBP: blank(source.INLAND_VAT_ADJUSTMENT_AIR_GBP),
+    // M6
+    STRIPE_SECRET_KEY: blank(source.STRIPE_SECRET_KEY),
+    STRIPE_WEBHOOK_SECRET: blank(source.STRIPE_WEBHOOK_SECRET),
+    STRIPE_PRICE_STARTER: blank(source.STRIPE_PRICE_STARTER),
+    STRIPE_PRICE_PRO: blank(source.STRIPE_PRICE_PRO),
+    // end M6
+    // M5 (storageEnvSchema blanks its own values)
+    STORAGE_ENDPOINT: source.STORAGE_ENDPOINT,
+    STORAGE_REGION: source.STORAGE_REGION,
+    STORAGE_BUCKET: source.STORAGE_BUCKET,
+    STORAGE_ACCESS_KEY_ID: source.STORAGE_ACCESS_KEY_ID,
+    STORAGE_SECRET_ACCESS_KEY: source.STORAGE_SECRET_ACCESS_KEY,
+    STORAGE_FORCE_PATH_STYLE: source.STORAGE_FORCE_PATH_STYLE,
+    STORAGE_LOCAL_DIR: source.STORAGE_LOCAL_DIR,
+    STORAGE_LOCAL_SECRET: source.STORAGE_LOCAL_SECRET,
+    CLAMD_HOST: source.CLAMD_HOST,
+    CLAMD_PORT: source.CLAMD_PORT,
+    // M2
+    FIELD_ENCRYPTION_KEY: blank(source.FIELD_ENCRYPTION_KEY),
+    COMPANIES_HOUSE_API_KEY: blank(source.COMPANIES_HOUSE_API_KEY),
+    FORWARDER_EORI: blank(source.FORWARDER_EORI),
+    FORWARDER_NAME: blank(source.FORWARDER_NAME),
   });
   return {
     ...parsed,

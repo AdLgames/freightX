@@ -13,6 +13,7 @@ const session: Session = {
     currentOrgId: null,
     role: null,
     csrfToken: randomToken(),
+    epoch: 0, // M2
     createdAt: 0,
     lastSeenAt: 0,
     rotatedAt: 0,

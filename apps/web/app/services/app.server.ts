@@ -16,6 +16,11 @@ import { createRedisClient } from './redis.server';
 import { createTariffClient } from './tariff.server';
 import { createTurnstile, type TurnstileVerifier } from './turnstile.server';
 import { createAuthServices, type AuthServices } from './workspace.server';
+// M6
+import { createBillingServices, type BillingServices } from './billing/billing.server';
+// end M6
+import { createDocumentServices, type DocumentServices } from './documents/storage.server'; // M5
+import { createSettingsServices, type SettingsServices } from './settings/index.server'; // M2
 
 /**
  * Composition root. Built once per process (memoised on `globalThis` so `react-router dev`
@@ -40,6 +45,13 @@ export interface AppServices {
   startedAt: Date;
   /** Sign-in, sessions and the workspace's database access (M1). See workspace.server.ts. */
   auth: AuthServices;
+  // M6: Stripe Billing (gateway, webhook queue, plan prices). See billing/billing.server.ts.
+  billing: BillingServices;
+  // end M6
+  /** M5: object storage, malware scanner and scan-job enqueuer for the document vault. */
+  documents: DocumentServices;
+  /** M2: field encryption, Companies House lookup, job enqueuer, forwarder details. See settings/index.server.ts. */
+  settings: SettingsServices;
 }
 
 export interface AppOverrides {
@@ -71,6 +83,10 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     redis,
     prisma: env.DATABASE_URL ? getPrisma(env.DATABASE_URL) : null,
   });
+  // M2 — settings services. In production a missing FIELD_ENCRYPTION_KEY closes the workspace
+  // (requireWorkspace answers 503); the calculator never looks at this.
+  const settings = createSettingsServices({ env, logger });
+  if (settings.unavailable && auth.unavailable === null) auth.unavailable = settings.unavailable;
   const turnstile = createTurnstile({
     siteKey: env.TURNSTILE_SITE_KEY,
     secretKey: env.TURNSTILE_SECRET_KEY,
@@ -86,6 +102,18 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     now,
   });
   const fx = await seedFxStore({ store: stores.fxStore, csvPath: env.FX_SEED_CSV, logger, now });
+  // M6
+  const billing = await createBillingServices({
+    env,
+    logger,
+    prisma: auth.prisma,
+    email: auth.email,
+    appUrl: auth.appUrl,
+    now,
+  });
+  // end M6
+  // M5
+  const documents = createDocumentServices({ env, logger, redis, prisma: auth.prisma });
 
   logger.info('app.started', {
     nodeEnv: env.NODE_ENV,
@@ -101,6 +129,10 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
       pricing.brokerDefermentDefaults.feePct !== null ||
       pricing.brokerDefermentDefaults.minimumGbp !== null,
     inlandVatAdjustmentModes: Object.keys(pricing.inlandVatAdjustmentGbp),
+    // M2 — presence only, never the key.
+    fieldEncryption: settings.fieldEncryption,
+    companiesHouse: settings.companiesHouse !== null,
+    jobEnqueuer: settings.jobs.backend,
   });
 
   return {
@@ -119,6 +151,11 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     calcVersion: CALC_VERSION,
     startedAt,
     auth,
+    // M6
+    billing,
+    // end M6
+    documents, // M5
+    settings, // M2
   };
 };
 

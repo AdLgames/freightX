@@ -39,6 +39,11 @@ export const TENANT_MODELS = [
   'AuditLog',
   'OutboxEvent',
   'CustomsProfile',
+  // M3 (ADR-0012)
+  'PickupLocation',
+  'PaymentTerms',
+  'PayoutMethod',
+  'Invitation', // M2
 ] as const;
 export type TenantModel = (typeof TENANT_MODELS)[number];
 
@@ -49,6 +54,9 @@ export const PASSTHROUGH_MODELS = [
   'TariffCache',
   'MagicLinkToken',
   'EmailSignup',
+  // M6: Stripe webhook idempotency rows (no organisation until processed; no RLS).
+  'StripeEvent',
+  // end M6
 ] as const;
 export type PassthroughModel = (typeof PASSTHROUGH_MODELS)[number];
 
@@ -66,6 +74,11 @@ export const TENANT_TABLES: Readonly<Record<TenantModel, string>> = {
   AuditLog: 'audit_logs',
   OutboxEvent: 'outbox_events',
   CustomsProfile: 'customs_profiles',
+  // M3 (ADR-0012)
+  PickupLocation: 'pickup_locations',
+  PaymentTerms: 'payment_terms',
+  PayoutMethod: 'payout_methods',
+  Invitation: 'invitations', // M2
 };
 
 export const isTenantModel = (model: string): model is TenantModel =>

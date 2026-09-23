@@ -13,6 +13,7 @@ import {
 import { loadEnv } from './services/env.server';
 import { createLogger, requestIdFor, type Logger } from './services/logger.server';
 import { applySecurityHeaders } from './services/security-headers.server';
+import { storageUploadOrigin } from './services/documents/storage.server'; // M5
 
 export const streamTimeout = 5_000;
 
@@ -26,6 +27,16 @@ const bootLogger = (): Logger => {
 };
 const logger = bootLogger();
 const isProduction = process.env.NODE_ENV === 'production';
+// M5: when uploads go straight to S3/R2 the CSP needs that origin in connect-src (env-driven,
+// computed once; local-disk storage is same-origin and adds nothing).
+const storageConnectSrc: string[] = (() => {
+  try {
+    const origin = storageUploadOrigin(loadEnv());
+    return origin ? [origin] : [];
+  } catch {
+    return [];
+  }
+})();
 
 /**
  * Streaming SSR (React Router 7 framework mode). Per request we mint a CSP nonce, hand it to
@@ -40,7 +51,10 @@ export default function handleRequest(
   routerContext: EntryContext,
 ) {
   const nonce = randomUUID();
-  applySecurityHeaders(responseHeaders, nonce, { hsts: isProduction });
+  applySecurityHeaders(responseHeaders, nonce, {
+    hsts: isProduction,
+    connectSrc: storageConnectSrc,
+  }); // M5
   responseHeaders.set('X-Request-Id', requestIdFor(request));
 
   if (request.method.toUpperCase() === 'HEAD') {

@@ -29,40 +29,81 @@ datasource db {
 // ---------- Tenancy & identity ----------
 
 model Organization {
-  id               String    @id @default(uuid()) @db.Uuid
-  name             String
-  eoriNumber       String?   @map("eori_number") // encrypted at rest, validated on save (§5.6)
-  vatNumber        String?   @map("vat_number") // encrypted at rest, validated against HMRC VAT API (§5.6)
-  vatRegistered    Boolean   @default(false) @map("vat_registered")
-  baseCurrency     String    @default("GBP") @map("base_currency")
-  plan             Plan      @default(FREE)
-  stripeCustomerId String?   @unique @map("stripe_customer_id")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-  deletedAt        DateTime? @map("deleted_at") // soft delete
+  id                   String             @id @default(uuid()) @db.Uuid
+  name                 String
+  eoriNumber           String?            @map("eori_number") // encrypted at rest, validated on save (§5.6)
+  vatNumber            String?            @map("vat_number") // encrypted at rest, validated against HMRC VAT API (§5.6)
+  vatRegistered        Boolean            @default(false) @map("vat_registered")
+  baseCurrency         String             @default("GBP") @map("base_currency")
+  plan                 Plan               @default(FREE)
+  stripeCustomerId     String?            @unique @map("stripe_customer_id")
+  // M6 (NEW vs brief) Stripe Billing subscription state, written only by the webhook processor
+  // (apps/web billing/events.server.ts). `plan` above is the EFFECTIVE plan; `subscriptionStatus`
+  // is the Stripe status mapped to our enum. `billingEmail` is PII (§7.3): stored lower-cased,
+  // never logged, never in audit metadata.
+  stripeSubscriptionId String?            @unique @map("stripe_subscription_id")
+  subscriptionStatus   SubscriptionStatus @default(NONE) @map("subscription_status")
+  currentPeriodEnd     DateTime?          @map("current_period_end")
+  cancelAtPeriodEnd    Boolean            @default(false) @map("cancel_at_period_end")
+  billingEmail         String?            @map("billing_email")
+  planUpdatedAt        DateTime?          @map("plan_updated_at")
+  // end M6
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+  deletedAt            DateTime?          @map("deleted_at") // soft delete
 
-  members        Membership[]
-  products       Product[]
-  suppliers      Supplier[]
-  quotes         Quote[]
-  quoteLines     QuoteLine[] // (NEW vs brief) inverse of the denormalised QuoteLine.organizationId
-  shipments      Shipment[]
-  shipmentEvents ShipmentEvent[] // (NEW vs brief) inverse of the denormalised ShipmentEvent.organizationId
-  documents      Document[] // (NEW vs brief) inverse of Document.organizationId
-  auditLogs      AuditLog[]
-  customsProfile CustomsProfile? // (NEW vs brief) 1:1 customs/payment routing settings (§6.1 Phase 2 preconditions)
+  // M2 (NEW vs brief, migration 0008) — field encryption (§7.3, src/crypto.ts) and identity checks.
+  // `eoriNumber` / `vatNumber` above hold ciphertext (`v1:<iv>:<tag>:<data>`, AAD = org id + field
+  // name) under a per-organisation data key, itself stored wrapped by the master key here. The
+  // last four characters are kept in clear for display only; never log either field.
+  dataKeyCiphertext       String?            @map("data_key_ciphertext")
+  eoriLast4               String?            @map("eori_last4")
+  vatLast4                String?            @map("vat_last4")
+  eoriVerificationStatus  VerificationStatus @default(UNVERIFIED) @map("eori_verification_status") // HMRC EORI checker (§5.6), set by the worker's eori-verify job
+  eoriVerifiedAt          DateTime?          @map("eori_verified_at")
+  vatVerificationStatus   VerificationStatus @default(UNVERIFIED) @map("vat_verification_status") // HMRC VAT checker (§5.6), set by the worker's vat-verify job
+  vatVerifiedAt           DateTime?          @map("vat_verified_at")
+  // M2 — Companies House gate (ADR-0015): stored for audit, only active ltd/plc/LLP will later see
+  // trade finance. `companiesHouseNumber` null + `companiesHouseCheckedAt` set = "sole trader or
+  // partnership" was chosen. Values are copied from the API response, never from the form.
+  companiesHouseNumber    String?            @map("companies_house_number")
+  companiesHouseStatus    String?            @map("companies_house_status")
+  companyType             String?            @map("company_type")
+  companiesHouseCheckedAt DateTime?          @map("companies_house_checked_at")
+  companiesHouseName      String?            @map("companies_house_name")
+
+  members         Membership[]
+  invitations     Invitation[] // M2 (NEW vs brief) pending and historical invitations
+  products        Product[]
+  suppliers       Supplier[]
+  quotes          Quote[]
+  quoteLines      QuoteLine[] // (NEW vs brief) inverse of the denormalised QuoteLine.organizationId
+  shipments       Shipment[]
+  shipmentEvents  ShipmentEvent[] // (NEW vs brief) inverse of the denormalised ShipmentEvent.organizationId
+  documents       Document[] // (NEW vs brief) inverse of Document.organizationId
+  auditLogs       AuditLog[]
+  customsProfile  CustomsProfile? // (NEW vs brief) 1:1 customs/payment routing settings (§6.1 Phase 2 preconditions)
+  // M3 (ADR-0012): inverses of the denormalised organizationId on the supplier sub-entities
+  pickupLocations PickupLocation[]
+  paymentTerms    PaymentTerms[]
+  payoutMethods   PayoutMethod[]
 
   @@map("organizations")
 }
 
 model User {
-  id         String   @id @default(uuid()) @db.Uuid
-  email      String   @unique
-  name       String?
-  mfaEnabled Boolean  @default(false) @map("mfa_enabled")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  name         String?
+  mfaEnabled   Boolean  @default(false) @map("mfa_enabled")
+  createdAt    DateTime @default(now()) @map("created_at")
+  // M2 (NEW vs brief, migration 0008) — every session records the epoch it was created under;
+  // bumping it (member removed, later: email change) invalidates all of the user's sessions on
+  // their next request (§7.1 "rotated on privilege change").
+  sessionEpoch Int      @default(0) @map("session_epoch")
 
   memberships       Membership[]
+  invitationsSent   Invitation[] @relation("invitationsSent") // M2 (NEW vs brief) inverse of Invitation.invitedBy
   uploadedDocuments Document[]   @relation("uploadedDocuments") // (NEW vs brief) inverse of Document.uploadedBy
   verifiedDocuments Document[]   @relation("verifiedDocuments") // (NEW vs brief) inverse of Document.verifiedBy
 
@@ -101,6 +142,60 @@ enum Plan {
   PRO
 
   @@map("plan")
+}
+
+// M6 (NEW vs brief) Stripe subscription status mapped to our vocabulary (billing/events.server.ts
+// owns the mapping). NONE = never subscribed. Additive only (§4 migration rules).
+enum SubscriptionStatus {
+  NONE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  INCOMPLETE
+  PAUSED
+
+  @@map("subscription_status")
+}
+
+// end M6
+// M2 (NEW vs brief, migration 0008) — result of the asynchronous HMRC EORI / VAT checks (§5.6).
+// Additive only. PENDING = saved, job queued; ERROR = the checker could not be reached (retried).
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VALID
+  INVALID
+  ERROR
+
+  @@map("verification_status")
+}
+
+// M2 (NEW vs brief, migration 0008) — invitation to join an organisation (§7.2 "manage members").
+// Tenant table with RLS. The raw token exists only in the email link (`/invite/accept?token=`);
+// `tokenHash` = sha256(secret). `email` is stored lower-cased for the accept-time comparison and
+// `emailHash` = sha256(email) so "is this address already invited?" never needs the address in a
+// query plan or log. Expires 7 days after creation; `acceptedAt` / `revokedAt` close it.
+model Invitation {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  email          String
+  emailHash      String    @map("email_hash")
+  role           Role      @default(MEMBER)
+  invitedById    String    @map("invited_by_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  expiresAt      DateTime  @map("expires_at")
+  acceptedAt     DateTime? @map("accepted_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  invitedBy    User         @relation("invitationsSent", fields: [invitedById], references: [id])
+
+  @@index([organizationId, emailHash])
+  @@index([organizationId, createdAt])
+  @@map("invitations")
 }
 
 // (NEW vs brief) How import duty/VAT is paid at the border. Additive only (§4 migration rules):
@@ -180,41 +275,195 @@ model EmailSignup {
   @@map("email_signups")
 }
 
+// M6 (NEW vs brief) Stripe webhook idempotency (§6.4 "duplicates are no-ops"). One row per Stripe
+// event id, inserted by POST /webhooks/stripe before the event is queued; a second delivery of the
+// same id is a no-op. NOT tenant-scoped (the organisation is only known after processing) and never
+// holds the payload — only its sha256 — so nothing here is PII. `processedAt` is set when the
+// processor finished (applied or ignored); `error` holds the last processing failure.
+model StripeEvent {
+  id            String    @id // Stripe event id, "evt_..."
+  type          String // e.g. "customer.subscription.updated"
+  receivedAt    DateTime  @default(now()) @map("received_at")
+  processedAt   DateTime? @map("processed_at")
+  error         String?
+  payloadSha256 String    @map("payload_sha256")
+
+  @@index([processedAt, receivedAt]) // ops: unprocessed / failed events
+  @@map("stripe_events")
+}
+
+// end M6
+
 // ---------- Catalogue ----------
 
 model Supplier {
   id              String    @id @default(uuid()) @db.Uuid
   organizationId  String    @map("organization_id") @db.Uuid
-  name            String
-  countryCode     String    @map("country_code") // ISO 3166-1 alpha-2 — drives preferential origin
+  name            String // M3: display name, maintained by the app as tradingName ?? legalName
+  countryCode     String    @map("country_code") // DEPRECATED (M3, ADR-0012): alias of countryOfIncorporation, written alongside it; remove after M4 (decisions-needed (w))
   defaultIncoterm Incoterm? @map("default_incoterm")
   createdAt       DateTime  @default(now()) @map("created_at") // (NEW vs brief) timestamps for every mutable row
   updatedAt       DateTime  @updatedAt @map("updated_at") // (NEW vs brief)
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  products     Product[]
+  // M3 (ADR-0012) legal entity: what a payments partner screens for KYB/AML. Migration 0007
+  // backfills legalName from name and countryOfIncorporation from countryCode.
+  legalName              String    @map("legal_name") // as registered
+  tradingName            String?   @map("trading_name")
+  registrationNumber     String?   @map("registration_number") // e.g. Unified Social Credit Code; not PII, not secret
+  countryOfIncorporation String    @map("country_of_incorporation") // ISO 3166-1 alpha-2
+  defaultCurrency        String?   @map("default_currency") // ISO 4217; pre-fills product currency
+  archivedAt             DateTime? @map("archived_at") // M3: archive instead of delete (products/quotes may reference)
+
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  products        Product[]
+  // M3 (ADR-0012) physical entities, payment terms and partner payout references
+  pickupLocations PickupLocation[]
+  paymentTerms    PaymentTerms?
+  payoutMethods   PayoutMethod[]
 
   @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from products (keeps denormalised org ids consistent)
   @@index([organizationId])
   @@map("suppliers")
 }
 
+// ---------- M3 (ADR-0012): supplier sub-entities ----------
+// Each carries a denormalised organizationId and a composite FK (supplier_id, organization_id) →
+// suppliers(id, organization_id), so a row can never point at another tenant's supplier. RLS,
+// CHECKs, the one-default-per-supplier partial index and grants are hand-written in 0007.
+
+// Where goods are collected: drives the origin port (and later origin trucking) of a quote. Never
+// the goods' origin for duty — that stays on Product.originCountry.
+model PickupLocation {
+  id              String   @id @default(uuid()) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  supplierId      String   @map("supplier_id") @db.Uuid
+  name            String // e.g. "Shenzhen factory"
+  addressLine1    String?  @map("address_line1")
+  addressLine2    String?  @map("address_line2")
+  city            String?
+  region          String?
+  postcode        String?
+  country         String // ISO 3166-1 alpha-2
+  closestPortCode String   @map("closest_port_code") // UN/LOCODE; CHECK ^[A-Z]{2}[A-Z0-9]{3}$ in 0007
+  isDefault       Boolean  @default(false) @map("is_default") // at most one per supplier (partial unique index, 0007)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  supplier     Supplier     @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([supplierId])
+  @@map("pickup_locations")
+}
+
+// Additive only (§4 migration rules).
+enum PaymentTermType {
+  PREPAID
+  NET
+  DEPOSIT_BALANCE
+
+  @@map("payment_term_type")
+}
+
+// Additive only.
+enum BalanceTrigger {
+  ON_SHIPMENT
+  AGAINST_BILL_OF_LADING
+  ON_ARRIVAL
+
+  @@map("balance_trigger")
+}
+
+// One per supplier (overridable per quote later). depositPct is a percentage ("30.00" = 30%),
+// matching the engine's percent convention. CHECKs in 0007: 0 ≤ depositPct ≤ 100, netDays ≥ 0,
+// DEPOSIT_BALANCE needs depositPct + balanceTrigger, NET needs netDays.
+model PaymentTerms {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  supplierId     String          @map("supplier_id") @db.Uuid
+  termType       PaymentTermType @map("term_type")
+  depositPct     Decimal?        @map("deposit_pct") @db.Decimal(5, 2)
+  balanceTrigger BalanceTrigger? @map("balance_trigger")
+  netDays        Int?            @map("net_days")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  supplier     Supplier     @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([supplierId])
+  @@unique([supplierId, organizationId]) // Prisma requires the 1:1 relation's scalar fields to be unique together (supplierId alone already is)
+  @@index([organizationId])
+  @@map("payment_terms")
+}
+
+// Additive only.
+enum PayoutPartner {
+  AIRWALLEX
+
+  @@map("payout_partner")
+}
+
+// Additive only.
+enum PayoutMethodType {
+  LOCAL
+  SWIFT
+
+  @@map("payout_method_type")
+}
+
+// Partner reference ONLY (§7.3, ADR-0012): the account number, routing code and account name go
+// straight to the partner and are never stored or logged here. accountLast4 is a masked display
+// value (CHECK: at most 4 characters, 0007). Schema only in M3 — no UI, no code writes it yet.
+model PayoutMethod {
+  id                   String           @id @default(uuid()) @db.Uuid
+  organizationId       String           @map("organization_id") @db.Uuid
+  supplierId           String           @map("supplier_id") @db.Uuid
+  partner              PayoutPartner
+  partnerBeneficiaryId String           @map("partner_beneficiary_id") // the partner's id for the beneficiary
+  type                 PayoutMethodType
+  currency             String // ISO 4217
+  bankCountry          String           @map("bank_country") // ISO 3166-1 alpha-2
+  bankName             String?          @map("bank_name")
+  accountLast4         String?          @map("account_last4")
+  verifiedAt           DateTime?        @map("verified_at")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  supplier     Supplier     @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([partner, partnerBeneficiaryId])
+  @@index([organizationId])
+  @@index([supplierId])
+  @@map("payout_methods")
+}
+
 model Product {
-  id               String    @id @default(uuid()) @db.Uuid
-  organizationId   String    @map("organization_id") @db.Uuid
-  supplierId       String?   @map("supplier_id") @db.Uuid
-  sku              String
-  name             String
-  hsCode           String    @map("hs_code") // 8 or 10 digits, validated against tariff (§5.2)
-  hsCodeVerifiedAt DateTime? @map("hs_code_verified_at") // null = user-entered, unverified
-  originCountry    String    @map("origin_country") // ISO code; may differ from supplier country
-  unitValue        Decimal   @map("unit_value") @db.Decimal(14, 4)
-  currency         String // ISO 4217
-  weightKg         Decimal   @map("weight_kg") @db.Decimal(10, 3)
-  volumeCbm        Decimal   @map("volume_cbm") @db.Decimal(10, 4)
-  unitsPerCarton   Int?      @map("units_per_carton")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  id                 String    @id @default(uuid()) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  supplierId         String?   @map("supplier_id") @db.Uuid
+  sku                String
+  name               String
+  hsCode             String    @map("hs_code") // 8 or 10 digits, validated against tariff (§5.2)
+  hsCodeVerifiedAt   DateTime? @map("hs_code_verified_at") // null = user-entered, unverified
+  originCountry      String    @map("origin_country") // ISO code; may differ from supplier country
+  unitValue          Decimal   @map("unit_value") @db.Decimal(14, 4)
+  currency           String // ISO 4217
+  weightKg           Decimal   @map("weight_kg") @db.Decimal(10, 3)
+  volumeCbm          Decimal   @map("volume_cbm") @db.Decimal(10, 4)
+  unitsPerCarton     Int?      @map("units_per_carton")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  // M3 (catalogue): carton dimensions kept so volumeCbm can be recomputed; the official tariff
+  // description captured at verification time; a preference hint from the lookup; archive flag.
+  cartonLengthCm     Decimal?  @map("carton_length_cm") @db.Decimal(8, 2)
+  cartonWidthCm      Decimal?  @map("carton_width_cm") @db.Decimal(8, 2)
+  cartonHeightCm     Decimal?  @map("carton_height_cm") @db.Decimal(8, 2)
+  hsDescription      String?   @map("hs_description") // official tariff description when hsCodeVerifiedAt was set
+  preferenceEligible Boolean   @default(false) @map("preference_eligible") // informational: any 142 measure existed at lookup; the engine decides per origin
+  archivedAt         DateTime? @map("archived_at") // archive instead of delete: quote lines reference products
 
   organization Organization @relation(fields: [organizationId], references: [id])
   // (NEW vs brief) composite FK (supplier_id, organization_id) → suppliers(id, organization_id):
@@ -320,6 +569,7 @@ model Quote {
   organization Organization @relation(fields: [organizationId], references: [id])
   lines        QuoteLine[]
   shipment     Shipment?
+  documents    Document[] // (NEW vs brief, M5) inverse of Document.quoteId — documents attached before a shipment exists
 
   @@unique([id, organizationId]) // (NEW vs brief) target of composite FKs from quote_lines and shipments
   @@index([organizationId, status])
@@ -463,6 +713,10 @@ enum DocumentType {
   CERTIFICATE_OF_ORIGIN
   INSURANCE_CERT
   OTHER
+  // (NEW vs brief, M5) organisation-level records (docs/phase-1-workspace-ux.md "Organisation documents"). Additive only.
+  EORI_CONFIRMATION
+  VAT_CERTIFICATE
+  REPRESENTATION_AUTHORITY
 
   @@map("document_type")
 }
@@ -477,31 +731,55 @@ enum DocumentStatus {
   @@map("document_status")
 }
 
+// (NEW vs brief, M5) What a document is attached to. Phase 1 has no shipments yet, so uploads hang
+// off an accepted quote (QUOTE) or the organisation itself (ORGANISATION: EORI confirmation, VAT
+// certificate, representation authority); SHIPMENT is Phase 2. Migration 0005 adds a CHECK so the
+// scope agrees with which of quote_id / shipment_id is set. Additive only.
+enum DocumentScope {
+  SHIPMENT
+  QUOTE
+  ORGANISATION
+
+  @@map("document_scope")
+}
+
 model Document {
   id             String         @id @default(uuid()) @db.Uuid
   organizationId String         @map("organization_id") @db.Uuid
   shipmentId     String?        @map("shipment_id") @db.Uuid
+  quoteId        String?        @map("quote_id") @db.Uuid // (NEW vs brief, M5) documents are collected per accepted quote before a shipment exists
+  scope          DocumentScope // (NEW vs brief, M5)
   type           DocumentType
   status         DocumentStatus @default(UPLOADED)
-  storageKey     String         @map("storage_key") // never a public URL; `orgId/shipmentId/docId` (§7.4)
-  originalName   String         @map("original_name")
+  storageKey     String         @map("storage_key") // never a public URL; `orgId/{quote|org}/docId` in Phase 1, `orgId/shipmentId/docId` (§7.4) once shipments exist
+  originalName   String         @map("original_name") // sanitised at upload; for display and Content-Disposition only, never a storage path, never logged (§7.3)
   mimeType       String         @map("mime_type")
-  sizeBytes      Int            @map("size_bytes")
-  sha256         String
-  version        Int            @default(1)
+  sizeBytes      Int            @map("size_bytes") // ≤ 25 MB (§7.4); Int is ample
+  sha256         String // '' until the scan pipeline has read the object
+  version        Int            @default(1) // same type + target again → version + 1; older rows are kept
   uploadedById   String         @map("uploaded_by_id") @db.Uuid
   verifiedById   String?        @map("verified_by_id") @db.Uuid
   verifiedAt     DateTime?      @map("verified_at")
+  // (NEW vs brief, M5) scan pipeline outcome (§7.4). scanEngine 'clamav' | 'none'; scanResult
+  // 'clean' | 'not_scanned' | a rejected reason. status stays UPLOADED when no scanner ran.
+  scanEngine     String?        @map("scan_engine")
+  scanResult     String?        @map("scan_result")
+  scannedAt      DateTime?      @map("scanned_at")
+  rejectedReason String?        @map("rejected_reason") // (NEW vs brief, M5) set with status REJECTED; the object is deleted from storage
+  deletedAt      DateTime?      @map("deleted_at") // (NEW vs brief, M5) soft delete; the object is removed from storage at the same time
   createdAt      DateTime       @default(now()) @map("created_at")
 
   organization Organization @relation(fields: [organizationId], references: [id]) // (NEW vs brief)
   // (NEW vs brief) composite FK: a document can only be attached to its own tenant's shipment.
   shipment     Shipment?    @relation(fields: [shipmentId, organizationId], references: [id, organizationId])
+  // (NEW vs brief, M5) composite FK: a document can only be attached to its own tenant's quote. Restrict: delete the documents first.
+  quote        Quote?       @relation(fields: [quoteId, organizationId], references: [id, organizationId], onDelete: Restrict)
   uploadedBy   User         @relation("uploadedDocuments", fields: [uploadedById], references: [id]) // (NEW vs brief) who uploaded (audit / UI)
   verifiedBy   User?        @relation("verifiedDocuments", fields: [verifiedById], references: [id]) // (NEW vs brief) who verified
 
   @@index([organizationId])
   @@index([shipmentId]) // (NEW vs brief) booking preconditions look up docs by shipment (§6.1)
+  @@index([organizationId, quoteId]) // (NEW vs brief, M5) vault "by quote" and missing-files list
   @@map("documents")
 }
 

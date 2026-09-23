@@ -11,3 +11,7 @@ export * from './freight/rate-sheet.js';
 export * from './freight/resilient.js';
 export * from './freight/searates.js';
 export * from './schedules/index.js';
+export * from './storage/index.js'; // M5: object storage, document formats, malware scan
+// M2 — settings: Companies House lookup (ADR-0015) and HMRC identity checks (§5.6).
+export * from './companies-house/index.js';
+export * from './hmrc/index.js';

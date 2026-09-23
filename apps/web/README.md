@@ -97,6 +97,9 @@ All optional (see the root `.env.example`):
 | `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form      | no default fee; the form says fee terms depend on the forwarder       |
 | `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown        | no adjustment                                                         |
 | `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                        | development / debug                                                   |
+| `FIELD_ENCRYPTION_KEY` (M2)                   | master key for EORI/VAT field encryption (32 bytes, base64)       | ephemeral key + warning; **production: workspace 503**                |
+| `COMPANIES_HOUSE_API_KEY` (M2)                | Companies House lookup in Settings › Organisation                 | lookup off; "sole trader or partnership" only                         |
+| `FORWARDER_EORI` / `FORWARDER_NAME` (M2)      | shown in the CDS "authorise the forwarder" step                   | "{forwarder to be confirmed}"                                         |
 
 `TRADE_TARIFF_API_KEY_HEADER` must be confirmed from the Trade Tariff developer portal before
 use; the key is never logged (only its presence, in `app.started`). The fee and inland-adjustment
@@ -231,12 +234,199 @@ Passkeys and TOTP (§7.1), invalidating sessions on email change (no email chang
 settings wizard (M2), recent drafts / quick duty check on Home (M4). Magic-link rows are not yet
 cleaned up (TODO for the worker, see packages/db README).
 
+## Billing (M6)
+
+Stripe Billing subscriptions (brief §3), OWNER only (§7.2 `billing.manage`). Files:
+`routes/app.settings_.billing.tsx` (page + checkout/portal actions), `routes/app.settings_.billing_.success.tsx`,
+`routes/webhooks.stripe.tsx` (public resource route), `services/billing/*`, `validators/billing.ts`,
+`components/plan-notice.tsx`, migration `0006_billing`.
+
+### Environment
+
+| Variable                                    | Effect when set                                                            | When unset                                                                 |
+| ------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `STRIPE_SECRET_KEY`                         | `StripeGateway` (API version pinned in `stripe.server.ts`)                 | billing page says "Billing is not configured"; everything else unchanged   |
+| `STRIPE_PRICE_STARTER` / `STRIPE_PRICE_PRO` | the Stripe price ids for the two paid plans (`price_…`)                    | same as above (both are required for checkout)                             |
+| `STRIPE_WEBHOOK_SECRET`                     | `POST /webhooks/stripe` verifies signatures with it                        | the webhook answers 503 so Stripe keeps retrying                           |
+| `REDIS_URL`                                 | webhook events go on the BullMQ `stripe-events` queue, consumed in-process | events are processed inline before the 200 (logged `billing.event_inline`) |
+
+Plan names and prices are **read from Stripe** (`prices.retrieve` with the product expanded, cached
+5 minutes) and never written in code. `billing.configured` at startup reports presence only.
+
+### Flow
+
+1. `/app/settings/billing` shows the effective plan (`Organization.plan`), status, renewal date and,
+   while the organisation has no subscription, "Choose Starter" / "Choose Pro". The POST (CSRF)
+   creates the Stripe customer on first use (`metadata.organizationId`, the owner's address as
+   billing email, stored lower-cased in `billingEmail` — PII, never logged), then a Checkout Session
+   (`mode: subscription`, `client_reference_id = organizationId`, the same id in `subscription_data.metadata`,
+   `allow_promotion_codes`), audits `billing.checkout_started` and redirects. "Manage subscription"
+   creates a Billing Portal session (return URL = the page), audits `billing.portal_opened` and redirects.
+2. `/app/settings/billing/success?session_id=` retrieves the session server-side and 404s unless its
+   `client_reference_id` is this organisation. It only confirms; the webhook is the source of truth.
+3. `POST /webhooks/stripe` (no CSRF — signature-authenticated; outside `/app`): body ≤ 256 KB (413),
+   `Stripe-Signature` required (400), verified with `stripe.webhooks.constructEvent` (HMAC, constant-time,
+   300 s replay window → 400), then one `stripe_events` row per event id (`ON CONFLICT DO NOTHING`:
+   a duplicate delivery is 200 and a no-op), enqueue, 200.
+4. Processor (`services/billing/events.server.ts`, pure over `BillingRepository`): `checkout.session.completed`
+   links customer/subscription/email; `customer.subscription.created|updated` maps price id → plan
+   and Stripe status → `SubscriptionStatus`, sets `currentPeriodEnd`/`cancelAtPeriodEnd` (PAST_DUE
+   keeps the plan; canceled/unpaid/incomplete/paused → FREE); `…deleted` → FREE + CANCELED;
+   `invoice.payment_failed` → PAST_DUE and emails every OWNER "Payment failed — update your card"
+   with a link to the billing page; `invoice.paid` clears PAST_DUE. Unknown types are marked
+   processed and ignored. Every change writes audit `billing.subscription_updated` with
+   `{ plan, status }` only. The organisation comes only from the event's `client_reference_id` /
+   `metadata.organizationId`; a customer that does not match the organisation's, or a missing id,
+   is recorded as `unresolved: …` on the row and never applied (no cross-tenant lookups).
+   A thrown error (unmapped price id, database down) is recorded in `stripe_events.error`, the
+   claim is released on the inline path (Stripe redelivers), and on BullMQ the job retries 5×
+   then is kept in `failed` and logged as `billing.event_dead_lettered` (error level).
+5. Gating: `requirePlan(ctx, 'STARTER')` (402 page) and `currentPlan(ctx)` in
+   `services/billing/plan.server.ts`; `planAllows(plan, feature, count)`, `minimumPlanFor` and the
+   provisional `PLAN_LIMITS` table in `plan.ts` (decision (z)); `<PlanNotice feature requiredPlan/>`
+   renders "Upgrade to Starter to save more than 3 quotes." Not wired into other milestones' routes.
+
+### Local development
+
+```sh
+stripe login
+stripe listen --forward-to localhost:5173/webhooks/stripe     # prints whsec_… → STRIPE_WEBHOOK_SECRET
+stripe prices list                                             # → STRIPE_PRICE_STARTER / STRIPE_PRICE_PRO
+stripe trigger customer.subscription.updated                   # or complete a checkout with a test card
+```
+
+Test cards (Stripe test mode): `4242 4242 4242 4242` succeeds; `4000 0000 0000 0341` attaches but
+fails the first invoice (exercises `invoice.payment_failed`); `4000 0000 0000 3220` requires 3-D
+Secure. Any future expiry, any CVC. Test-mode price ids start with `price_` like live ones — keep
+the two environments' keys apart (§7.6).
+
+Tests: `services/billing/*.test.ts` and `validators/billing.test.ts` need no database; the
+`fixtures/` are hand-authored in Stripe's documented shape (see their README) and substituted per
+test organisation. `routes/webhooks.stripe.db.test.ts` and `routes/app.settings_.billing.db.test.ts`
+run with `DATABASE_URL` (superuser or `harbour_app` member) on a `FakeBillingGateway`, covering
+signature/size/replay/duplicate rules, OWNER-vs-ADMIN, CSRF, audit rows, the cross-tenant negative
+and a no-PII log snapshot.
+
+## Documents (M5)
+
+Brief §7.4. Routes `app/routes/app.documents*.tsx` and `files.*.tsx`, services
+`app/services/documents/`, validators `app/validators/documents.ts`, storage/scan adapters in
+`packages/adapters/src/storage/`, scan job in `apps/worker/src/jobs/document-scan.ts`, migration
+`0005_documents_quote_link`.
+
+### Environment
+
+| Variable                                                               | Effect when set                                                                                                | When unset                                                                                                                                                                        |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY` | `S3ObjectStorage` (AWS S3, or Cloudflare R2 with `STORAGE_ENDPOINT`; `STORAGE_REGION` defaults to `auto` then) | outside production: `LocalDiskObjectStorage` under `STORAGE_LOCAL_DIR` (default `.data/storage`); **production: "Document storage not configured" (503) for /app/documents only** |
+| `STORAGE_ENDPOINT` / `STORAGE_FORCE_PATH_STYLE`                        | R2/MinIO endpoint; path-style is the default with an endpoint                                                  | AWS virtual-hosted URLs                                                                                                                                                           |
+| `STORAGE_LOCAL_DIR` / `STORAGE_LOCAL_SECRET`                           | local backend directory and HMAC secret for `/files/*` URLs                                                    | `.data/storage`; secret derived from `SESSION_SECRET` or a fixed development value                                                                                                |
+| `CLAMD_HOST` / `CLAMD_PORT`                                            | `ClamdScanner` (INSTREAM over TCP, 60 s budget)                                                                | `NoScanner`: type + size check only, documents stay **Uploaded**, never **Clean**                                                                                                 |
+| `REDIS_URL`                                                            | scan jobs go to the `document-scan` BullMQ queue for `apps/worker`                                             | the scan runs in-process after the response, with a `document_scan.inline` log line                                                                                               |
+
+A partial S3 configuration (e.g. only the bucket) disables the vault too — fail closed, one
+`documents.storage_unavailable` error at startup. With S3 the presigned upload origin is added to
+the CSP as `connect-src 'self' <origin>` (`entry.server.tsx`, derived from the same env); the local
+backend is same-origin and needs nothing.
+
+### Upload flow
+
+1. `GET /app/documents/new` (`doc.upload`): type, target (the organisation, or one of its
+   quotes — M4 links here with `?quoteId=`), file.
+2. With JavaScript (`public/documents-upload.js`, served from our origin so it needs no nonce):
+   `POST /app/documents/presign` (CSRF, metadata only) validates extension + declared MIME
+   (PDF/PNG/JPG/XLSX/CSV, ≤ 25 MB), creates the `Document` row in `UPLOADED` with a sanitised
+   name and key `orgId/{quote|org}/docId`, and returns a 5-minute presigned PUT whose
+   Content-Type is part of the signature. The browser PUTs the bytes straight to storage, then
+   `POST /app/documents/:id/complete` (CSRF): `head()` must find the object at the declared size
+   → `SCANNING`, audit `doc.upload`, scan job. Without JavaScript the same form posts the file to
+   the app, which spools it and puts it into storage server-side with the same limits — the no-JS
+   and development path only.
+3. Scan (`@harbour/adapters` `runDocumentScan`, run by the worker or inline): sha256, magic
+   bytes (`%PDF-`, PNG, JPEG, ZIP + `[Content_Types].xml` for XLSX, NUL-free valid UTF-8 for CSV)
+   must match the declared type, then the malware scanner.
+   - mismatch, size disagreement or scanner `FOUND` → **Rejected** with `rejectedReason`; the
+     object is deleted before the row is updated;
+   - scanner ran clean → **Clean** (`scanEngine = clamav`);
+   - no scanner → stays **Uploaded** with `scanEngine = none`, `scanResult = not_scanned`. The UI
+     says "Type and size checked. Not virus-scanned." This is deliberately not Clean: booking
+     (§6.1) needs Clean or Verified, so unscanned documents block it.
+4. **Verified** = an OWNER/ADMIN confirmed a Clean document (`doc.verify`). Uploading the same type
+   for the same target again creates version n+1 and keeps the history.
+
+Download: `GET /app/documents/:id/download` (`doc.download`, audit `doc.download`) → 302 to a
+5-minute presigned GET with `Content-Disposition: attachment; filename="<sanitised>"`. Delete
+(`doc.upload`): soft (`deletedAt`), object removed, audit `doc.delete`. The vault lists missing
+files per accepted quote (commercial invoice, packing list), documents by quote, and organisation
+documents (EORI confirmation, VAT certificate, representation authority). Original file names are
+kept for display only and never logged (`originalName` is a redacted log key).
+
+## Settings (M2)
+
+Routes under `/app/settings` (`app.settings.tsx` is the layout; M6 adds `app.settings.billing.tsx`
+inside it): Overview, **Organisation** (`app.settings.organisation.tsx`), **Customs profile**
+(`app.settings.customs.tsx`), **Members** (`app.settings.members.tsx`), **Audit log**
+(`app.settings.audit.tsx`), and the invitation landing page `invite.accept.tsx`. Services live in
+`app/services/settings/`, schemas in `app/validators/settings.ts`. Every POST carries `<CsrfInput/>`
+and an `intent` field; every loader/action starts with `requireOrgContext` and uses `withOrg`.
+
+| Variable                  | Effect                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FIELD_ENCRYPTION_KEY`    | 32 random bytes, base64 (`node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`). Master key of the envelope encryption in `@harbour/db` `crypto.ts`. Production without it → every workspace route is 503 "Workspace not configured" (the calculator is unaffected); development/test → an ephemeral key and a `settings.field_encryption_ephemeral` warning. The worker needs the same value. |
+| `COMPANIES_HOUSE_API_KEY` | Enables "Is your business a limited company?" (search + confirm). HTTP Basic, key as username. Unset → only "I'm a sole trader or partnership".                                                                                                                                                                                                                                                                             |
+| `FORWARDER_EORI`          | The forwarding partner's EORI shown in step 4 (validated as an EORI). Unset → `{forwarder to be confirmed}`.                                                                                                                                                                                                                                                                                                                |
+| `FORWARDER_NAME`          | The forwarding partner's name in the CDS confirmation checkbox. Unset → `{forwarder to be confirmed}`.                                                                                                                                                                                                                                                                                                                      |
+| `REDIS_URL`               | Also picks the BullMQ `JobEnqueuer` (`settings/jobs.server.ts`) that queues `eori-verify` / `vat-verify` for the worker. Unset → an in-memory enqueuer that only logs `jobs.enqueue_skipped`; numbers stay "pending".                                                                                                                                                                                                       |
+
+- **Organisation:** name and base currency (`org.update` audit: `nameChanged`, `baseCurrency`);
+  EORI (`^(GB|XI)\d{12}$`, whitespace stripped, upper-cased) and VAT registration (yes/no + VRN
+  with the check digit). Both numbers are encrypted before they are stored (`identity.server.ts`):
+  the columns hold ciphertext, `eoriLast4` / `vatLast4` are shown, the status goes to `PENDING`
+  and the verification job is queued after the transaction commits. Audit `org.eori.update` /
+  `org.vat.update` carry the last four only. Only OWNER/ADMIN (`org.tax_ids.edit`) may change
+  them; everyone else sees a read-only page. Clearing the VAT registration while the customs
+  profile uses PVA is refused (pre-check + the 0003 trigger as backstop).
+- **Company lookup (ADR-0015 step 1b):** searches Companies House by name, shows "Is this you?"
+  matches, and on confirmation re-reads the company profile from the API (never trusts the form)
+  and stores number/status/type/name/checked-at; "sole trader or partnership" stores a check time
+  with no number. Audit `org.company.confirm` with the number, status and type (public registry
+  data). `isEligibleForFinance` (adapters) is only surfaced as a hint; nothing is gated in M2.
+- **Customs profile:** the wizard's steps 2–4 with the corrected copy (forwarder pays and
+  invoices; fee from the forwarder's terms, `BROKER_DEFERMENT_FEE_PCT`/`_MIN_GBP` prefilled when
+  the profile has none; PVA changes when VAT is paid, not what goods cost; the forwarder's EORI is
+  the one to authorise; CDS authority gates booking, not quoting). PVA needs a VAT registration
+  (friendly field error; the DB trigger is the backstop); own deferment needs a 7-digit DAN; the
+  CDS checkbox sets `cdsAuthorityGranted`, `cdsAuthorityConfirmedAt` and `…ById` and is cleared
+  when the payment method changes away. The DAN is validated, stored in clear (see packages/db
+  README for the encryption follow-up) and never logged or audited. Audit
+  `org.customs_profile.update` (flags and enums) and `org.cds_authority.confirm`.
+- **Members:** list with roles; OWNER/ADMIN (`member.manage`) invite by email + role (only an
+  OWNER may grant OWNER), change roles (never your own; an OWNER may only be demoted by an OWNER;
+  the last OWNER is protected), remove members (bumps `users.sessionEpoch`, which signs that user
+  out everywhere on their next request) and revoke invitations. Invitations: 7-day link
+  `/invite/accept?token=<org id>.<secret>` sent through the `EmailTransport`; only the sha256 of
+  the secret is stored; accepting requires being signed in as that address (a signed-out visitor
+  goes through the magic link and lands back on the invitation). Audit `invitation.create` /
+  `.accept` / `.revoke`, `membership.create` / `.role_change` / `.delete` — ids and roles only.
+- **Audit log:** OWNER/ADMIN (`audit.view`), 25 per page, newest first; actor names resolved on
+  screen only.
+- **Verification status** (`UNVERIFIED` → `PENDING` → `VALID` / `INVALID` / `ERROR`) is written by
+  the worker (apps/worker README "Identity verification jobs"); the page shows the badge and the
+  check time.
+
+Tests: `validators/settings.test.ts`, `services/settings/*.test.ts` (enqueuer, startup guards) and
+`routes/settings-flow.db.test.ts` (with `DATABASE_URL`: encrypted storage, PVA/DAN rules, company
+confirmation, the invitation flow incl. expiry/revoke/wrong address, role rules, member removal
+signing out, cross-tenant negatives and the no-PII log snapshot).
+
 ## Phase 1 TODO (not built — brief §2, §7)
 
 - Auth: passkeys (WebAuthn), optional TOTP.
 - Products, suppliers, HS code verification stored as `hsCodeVerifiedAt`.
 - Saved quotes: persist `QuoteResult` snapshots, `ACCEPTED` immutability, hourly expiry job.
 - Document vault: presigned uploads, AV scan, magic-byte checks.
+- ~~Stripe Billing subscription and plan gating~~ (M6, see "Billing (M6)").
+- Document vault: built in M5 (see "Documents (M5)"); ClamAV container and R2 vs S3 are open decisions.
 - Stripe Billing subscription and plan gating.
 - Worker (`apps/worker`): HMRC/ECB FX jobs, tariff cache refresh, quote expiry.
 - SeaRates behind `ResilientFreightProvider` with the rate sheet as fallback and outlier checks.
@@ -263,3 +453,86 @@ keys before any public traffic. The workspace goes further: in production it ref
 sessions without `REDIS_URL` (503), because per-instance sessions would sign users out at random.
 It also needs `DATABASE_URL`, `APP_URL` and `EMAIL_TRANSPORT=resend` with `RESEND_API_KEY` and
 `EMAIL_FROM`.
+
+## Catalogue (M3)
+
+Products and suppliers under `/app/products` and `/app/suppliers` (docs/phase-1-workspace-ux.md
+"Products (catalogue)", ADR-0012). Both pages are a list layout with the add/edit **drawer** as a
+child route (`app.products.new.tsx`, `app.products.$productId.tsx`, `app.suppliers.new.tsx`,
+`app.suppliers.$supplierId.tsx`) rendered beside the table on wide screens and above it on narrow
+ones. Every form is a plain `<Form method="post">` with `<CsrfInput/>` and an `intent` button, so
+the whole catalogue works with JavaScript off. Any member may view; every mutation needs the
+`catalogue.edit` RBAC action (OWNER/ADMIN/MEMBER; VIEWER gets the 403 page).
+
+```
+routes/app.products.tsx            list (SKU, name, supplier, origin, HS code + verified mark, value, CBM, kg), search, archived filter
+routes/app.products.new.tsx        add product; routes/app.products.$productId.tsx  edit / archive / restore
+routes/app.suppliers.tsx           list; routes/app.suppliers.new.tsx  add; routes/app.suppliers.$supplierId.tsx  edit + pickup locations + payment terms
+routes/app.api.hs-lookup.tsx       POST, JSON: the HS code field's live lookup (CSRF, 10/min per user)
+components/catalogue/              drawer, field helpers, product form, supplier forms, HS code field + its client module
+services/catalogue/
+  hs-lookup.server.ts              lookupHsCode(): 10 digits → commodity summary; 6/8 → candidates; never guesses
+  product-form.server.ts           shared product-form logic: verifyForSave(), "Check code", rate-limited lookup
+  products.server.ts               list/get/create/update/archive/restore with audit rows
+  suppliers.server.ts              supplier, pickup locations (one default), payment terms (one per supplier)
+  snapshot.server.ts               productToQuoteLineSnapshot(product, qty) → engine LineInput (used by M4)
+validators/product.ts, supplier.ts zod schemas; cbmFromCarton() (Decimal, 4 dp half-up)
+data/countries-all.ts              every ISO 3166-1 alpha-2 code (the calculator keeps its short list)
+```
+
+### HS code field (§5.2, ADR-0006)
+
+- Spaces and dots are stripped; 6, 8 or 10 digits are accepted; 9 or 11 are rejected with a message.
+- **10 digits** → `lookupCommodity` through the app's cached tariff client (24 h): the official
+  description, third-country duty, VAT rate and a `preferenceEligible` hint (a 142 measure exists
+  for some origin — informational; the engine decides per origin at quote time).
+- **6 or 8 digits** → `headingCandidates` + `normaliseHsCode`: the declarable 10-digit children with
+  descriptions and duties, shown as radios (`hsCodeChoice`) for the user to pick. A single child is
+  still a candidate. The product is never saved with a 6/8-digit code.
+- Progressive enhancement: without JavaScript the "Check code" submit (`intent=check-hs`) runs the
+  same lookup in the action and re-renders the result. With JavaScript,
+  `components/catalogue/hs-lookup-client.ts` (bundled and loaded through `<Scripts nonce>`; no
+  inline scripts, no inline handlers, no `innerHTML`) debounces typing (400 ms) and POSTs to
+  `/app/api/hs-lookup` with the form's CSRF token.
+- Rate limit: 10 lookups per minute per **user** (`TARIFF_LOOKUP_LIMIT`, keyed by user id through
+  the shared limiter); the endpoint answers 429 with `Retry-After`, the form says so.
+- **On save** `hsCodeVerifiedAt`, `hsDescription` and `preferenceEligible` are set only when the
+  lookup succeeded for the exact 10-digit code being saved (`verifyForSave`). An unchanged, already
+  verified code is kept without a new lookup. If the tariff service is down, the code is not found,
+  or the user is over the limit, the product saves **unverified** and the list banner says why
+  (`?notice=saved-unverified&reason=…`). Unverified codes show an amber mark: quotes using them are
+  `INDICATIVE` until verified.
+
+### Products
+
+Three sections mapped to the Prisma `Product` model: Identity (SKU unique per organisation —
+the DB unique violation comes back as a field error — name, supplier), Sourcing (origin from the
+full ISO list, unit value ≤ 4 dp, currency incl. JPY), Logistics and compliance (kg per unit,
+CBM per unit **or** carton L×W×H cm + units per carton → CBM computed with Decimal, 4 dp half-up,
+e.g. 40×30×25 cm ÷ 12 = 0.0025; the carton dimensions are stored so the volume can be recomputed).
+Products are **archived, never deleted**: quote lines snapshot them but keep the reference. Audit:
+`product.create` / `product.update` (changed field names) / `product.archive` / `product.restore`.
+
+### Suppliers (ADR-0012)
+
+Legal identity (`legalName`, `tradingName`, `registrationNumber`, `countryOfIncorporation`),
+sourcing defaults (`defaultCurrency`, `defaultIncoterm`), pickup locations (address, country,
+closest port from the rate-sheet allow-list **or** a typed 5-character UN/LOCODE; the first one is
+the default, "Make default" moves it, the DB allows one per supplier) and payment terms (one row per
+supplier: `PREPAID`, `NET` + days, `DEPOSIT_BALANCE` + deposit % + balance trigger). `Supplier.name`
+is the display name (trading name, else legal name). `countryCode` is written alongside
+`countryOfIncorporation` as a deprecated alias until M4 (decisions-needed (w)). `PayoutMethod`
+exists in the schema only — nothing writes partner references until a payments partner is signed.
+Audit: `supplier.create/update/archive/restore`, `pickup_location.create/update/delete`,
+`payment_terms.update`. Metadata carries ids, enum values and field names only — never names,
+SKUs, addresses or registration numbers (and the log snapshot test checks the logs).
+
+### Tests
+
+`validators/product.test.ts`, `validators/supplier.test.ts`, `services/catalogue/*.test.ts` run
+without a database. `routes/catalogue.db.test.ts` (with `DATABASE_URL`, superuser or `harbour_app`
+member) drives the routes end to end with the recorded tariff fixtures
+(`test-support/tariff-fixtures.ts`): endpoint results and the 429 on the 11th call, product CRUD,
+SKU uniqueness, archive, unverified save when the fetch fails, VIEWER denied, pickup default
+uniqueness and the payment-terms CHECKs, cross-tenant negatives through the routes, the services
+and raw SQL under RLS, and the no-PII log rule.

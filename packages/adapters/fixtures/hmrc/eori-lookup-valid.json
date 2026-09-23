@@ -1,0 +1,16 @@
+[
+  {
+    "_comment": "HAND-AUTHORED SAMPLE in the documented HMRC 'Check an EORI number' API shape (POST /customs/eori/lookup, body {\"eoris\":[...]}). Not a live recording: the build sandbox cannot reach api.service.hmrc.gov.uk. The EORI is a placeholder, not a real trader.",
+    "eori": "GB123456789000",
+    "valid": true,
+    "companyDetails": {
+      "traderName": "SAMPLE IMPORTER LTD",
+      "address": {
+        "streetAndNumber": "1 Example Street",
+        "cityName": "London",
+        "postcode": "EC1A 1AA"
+      }
+    },
+    "processingDate": "2026-09-23T10:15:30.000Z"
+  }
+]

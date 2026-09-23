@@ -43,6 +43,39 @@ export type { Role, Action } from './rbac.js';
 export { recordAudit } from './audit.js';
 export type { AuditEntry, AuditWriter } from './audit.js';
 
+// M2 — field encryption (§7.3), see crypto.ts and README "Field encryption".
+export {
+  CIPHERTEXT_VERSION,
+  CIPHERTEXT_RE,
+  DATA_KEY_BYTES,
+  MASTER_KEY_BYTES,
+  ORGANIZATION_ENCRYPTED_FIELDS,
+  FieldCryptoError,
+  EnvKeyProvider,
+  parseMasterKey,
+  generateMasterKey,
+  generateDataKey,
+  encryptField,
+  decryptField,
+  isCiphertext,
+  last4,
+  rewrapDataKey,
+  resolveOrgDataKey,
+  orgFieldCipher,
+  createKeyProvider,
+  prismaDataKeyStore,
+  InMemoryDataKeyStore,
+} from './crypto.js';
+export type {
+  KeyProvider,
+  DataKeyStore,
+  DataKeyStoreClient,
+  OrgFieldCipher,
+  KeyProviderChoice,
+  FieldCryptoErrorCode,
+  OrganizationEncryptedField,
+} from './crypto.js';
+
 export {
   PrismaTariffCacheStore,
   PrismaFxRateStore,
@@ -57,6 +90,9 @@ export {
 } from './stores.js';
 export type { PrismaTariffCacheStoreOptions, EmailSignupInput } from './stores.js';
 
+// M5: document vault
+export { PrismaDocumentScanStore, DOCUMENT_SCAN_AUDIT_ACTION } from './documents.js';
+
 // Generated client re-exports. `PrismaClient` is exported as a type only: construct instances via
 // createPrismaClient() so there is one pool per process. `Role` (the Prisma enum) is exported as
 // PrismaRole because the RBAC `Role` union above carries the same values.
@@ -69,8 +105,18 @@ export {
   ShipmentStatus,
   DocumentType,
   DocumentStatus,
+  DocumentScope, // M5
   PaymentMethod,
+  VerificationStatus, // M2
   Role as PrismaRole,
+  // M6
+  SubscriptionStatus,
+  // end M6
+  // M3 (ADR-0012)
+  PaymentTermType,
+  BalanceTrigger,
+  PayoutPartner,
+  PayoutMethodType,
 } from '../generated/client/index.js';
 export type {
   PrismaClient,
@@ -92,4 +138,12 @@ export type {
   OutboxEvent,
   TariffCache,
   FxRate,
+  // M6
+  StripeEvent,
+  // end M6
+  // M3 (ADR-0012)
+  PickupLocation,
+  PaymentTerms,
+  PayoutMethod,
+  Invitation, // M2
 } from '../generated/client/index.js';

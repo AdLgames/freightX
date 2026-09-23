@@ -1,0 +1,38 @@
+{
+  "id": "{{EVENT_ID}}",
+  "object": "event",
+  "api_version": "2026-08-26.dahlia",
+  "created": 1790000000,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": { "id": null, "idempotency_key": null },
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "id": "cs_test_FixtureCheckoutSession001",
+      "object": "checkout.session",
+      "mode": "subscription",
+      "status": "complete",
+      "payment_status": "paid",
+      "client_reference_id": "{{ORG_ID}}",
+      "customer": "{{CUSTOMER_ID}}",
+      "customer_details": {
+        "email": "{{EMAIL}}",
+        "name": "Fixture Owner",
+        "address": null,
+        "phone": null,
+        "tax_exempt": "none",
+        "tax_ids": []
+      },
+      "subscription": "{{SUBSCRIPTION_ID}}",
+      "metadata": { "organizationId": "{{ORG_ID}}", "plan": "STARTER" },
+      "currency": "gbp",
+      "amount_subtotal": 2900,
+      "amount_total": 2900,
+      "livemode": false,
+      "success_url": "http://localhost/app/settings/billing/success?session_id={CHECKOUT_SESSION_ID}",
+      "cancel_url": "http://localhost/app/settings/billing?cancelled=1",
+      "url": null
+    }
+  }
+}

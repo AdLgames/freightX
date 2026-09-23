@@ -10,7 +10,24 @@ writers of `FxRate` and the nightly re-warmers of `TariffCache`.
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
 | `fx-refresh`     | Fetches this month's HMRC monthly CSV and, from the 25th, next month's (HMRC publishes ~1 week before the month starts; a 404 for next month before that is expected, not an alert). Parses and upserts on `(source, currency, validFrom)`. On the 2nd or later, if the current month's HMRC rates are still absent it raises **critical `FX_HMRC_MISSING`**. Then fetches ECB daily reference rates as fallback data (valid 7 days). 5s timeout, 2 retries with jitter per request. | `0 6 * * *` daily, plus `0 7 1,25 * *` (§5.7) |
 | `tariff-refresh` | Re-warms the tariff cache for every active commodity code through `UkTradeTariffClient` (≤ 5 concurrent, 100 ms between starts). Entries older than an hour are refetched (`refreshingCacheView`). Summarises ok / notFound / unavailable; raises **warning `TARIFF_REFRESH_DEGRADED`** if more than 20 % of codes were unavailable.                                                                                                                                                 | `0 2 * * *` nightly                           |
+| `document-scan`  | M5, on demand (no schedule): one job per completed upload, `{ documentId, organizationId }`, enqueued by the web app. Streams the object, computes sha256, checks magic bytes against the declared type, then runs the malware scanner (`CLAMD_HOST`, else none). Outcome: `REJECTED` (object deleted, reason kept), `CLEAN` (scanner ran) or `UPLOADED` + `not_scanned` (no scanner: never Clean). A `FOUND` raises **warning `DOCUMENT_MALWARE_FOUND`**. See "Environment".        | none (on demand)                              |
 | `quote-expiry`   | Calls `QuoteExpiryPort.expireQuotesPastValidUntil(now)`: moves `READY`, `INDICATIVE` and `DRAFT` quotes past `validUntil` to `EXPIRED`. **Never touches `ACCEPTED`** (immutable, §5.9) nor `CANCELLED`/`EXPIRED` rows. Returns the count.                                                                                                                                                                                                                                            | `0 * * * *` hourly (§5.8)                     |
+
+### Event-driven: `stripe-events` (M6)
+
+Not in the table above because it has no schedule: `POST /webhooks/stripe` in the web app verifies
+the Stripe signature, records the event id in `stripe_events` (duplicates are dropped there) and
+enqueues `{ eventId, type, payload }` with `jobId = eventId`, `attempts: 5`, exponential backoff
+from 30 s and **failed jobs kept** (the dead-letter set of brief §6.4). The job contract lives in
+`src/jobs/stripe-events.ts` and must stay identical to
+`apps/web/app/services/billing/queue.server.ts`.
+
+Who consumes it: **the web app itself** by default (it has Prisma and the email transport). Set
+`STRIPE_EVENTS_CONSUMER=worker` to make this process consume instead — today that fails every job
+loudly (`UnconfiguredStripeEventHandler`) and raises **critical `STRIPE_EVENT_DEAD_LETTERED`** after
+the 5th attempt, because the worker has no database yet (same `TODO(db)` as the other ports). Wire
+a Prisma-backed `StripeEventHandlerPort` (the logic is `apps/web/app/services/billing/events.server.ts`)
+before flipping it. Without `REDIS_URL` the web app processes events inline and says so in its log.
 
 Job options on every scheduler: `attempts: 5`, exponential backoff from 30 s, `removeOnComplete: 100`,
 `removeOnFail: 500`. Schedulers are registered with `Queue.upsertJobScheduler` on every boot under
@@ -40,6 +57,8 @@ The FX schedule is deliberately simple: the job logic decides what is due (which
 | `WORKER_PORT`              | no (default `9090`)   | Port for `GET /healthz`, which returns `{ ok, startedAt, queues: [{ name, lastRun }] }` with the last completed/failed run per queue.                                                                   |
 | `TARIFF_REFRESH_CODES`     | no                    | Phase 0: comma-separated 10-digit commodity codes to re-warm nightly. Phase 1 replaces this with every `Product.hsCode` in the DB (see `wiring.server.ts`).                                             |
 | `UK_TRADE_TARIFF_BASE_URL` | no                    | Override the UK Trade Tariff API base URL (tests, recorded fixtures).                                                                                                                                   |
+| `STRIPE_EVENTS_CONSUMER`   | no (default `web`)    | M6: `worker` starts a consumer for the `stripe-events` queue in this process (needs a database-backed handler, not wired yet); `web` leaves it to the web app.                                          |
+| `STORAGE_*`, `CLAMD_*`     | for `document-scan`   | M5: same variables as the web app (root `.env.example`) plus `DATABASE_URL` as a `harbour_app` member. Unset → each `document-scan` job fails with "not configured"; other queues are unaffected.       |
 
 Alerts always go to stdout as structured JSON (`{"event":"alert",...}`) in addition to the webhook.
 
@@ -94,3 +113,23 @@ Alerts from this worker are handled by
 The runbook refers to the jobs as `fx.hmrc-monthly`, `fx.ecb-daily` and `tariff.refresh`; they
 map to the `fx-refresh` (both FX sources, one run) and `tariff-refresh` queues here. Circuit
 breaker incidents: [`docs/runbooks/circuit-breaker-open.md`](../../docs/runbooks/circuit-breaker-open.md).
+
+## Identity verification jobs (M2)
+
+`eori-verify` and `vat-verify` are **on-demand** queues (no cron): apps/web adds a job
+`{ organizationId }` when an EORI or VAT number is saved in Settings. The job reads the
+**encrypted** number and the organisation's wrapped data key, decrypts in memory, calls the HMRC
+checker (`HmrcEoriChecker` / `HmrcVatChecker` in `@harbour/adapters`) and writes
+`eori_/vat_verification_status` (`VALID` / `INVALID` / `ERROR`) plus `_verified_at`, only if the
+stored ciphertext is unchanged since the job was queued. A definite HMRC answer completes the
+job; `UNAVAILABLE` / `MALFORMED` / `BAD_REQUEST` records `ERROR` and throws so BullMQ retries;
+three consecutive errors for one organisation raise **warning `IDENTITY_VERIFY_REPEATED_ERROR`**.
+The number never appears in a log, summary or alert.
+
+| Variable               | Meaning                                                                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`         | Same database as apps/web. The store (`identity-store.server.ts`) runs every statement inside `withOrgTransaction(organizationId)`, so the login role must be a non-superuser member of `harbour_app` (RLS). |
+| `FIELD_ENCRYPTION_KEY` | The **same** master key as apps/web. Unset → the identity jobs fail with a clear error; the FX/tariff/expiry jobs are unaffected.                                                                            |
+| `HMRC_API_BASE_URL`    | Optional override of `https://api.service.hmrc.gov.uk` (tests, sandbox).                                                                                                                                     |
+
+Run one inline: `node dist/main.js --once eori-verify --data '{"organizationId":"<uuid>"}'`.
