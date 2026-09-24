@@ -51,6 +51,13 @@ export interface CollectOptions {
   connect?: () => AisSocketLike;
 }
 
+/**
+ * aisstream answers an invalid key or a malformed subscription by dropping the connection: no
+ * error frame, no close reason (probed 2026-09). So "closed without reports" is the refusal.
+ */
+export const AIS_REFUSED_MESSAGE =
+  'aisstream closed the connection without sending reports (this is how it rejects an invalid API key)';
+
 /** Opens the stream, subscribes, gathers reports for `durationMs`, closes. Never throws. */
 export const collectAisReports = (
   apiKey: string,
@@ -75,12 +82,20 @@ export const collectAisReports = (
       }
       resolve({ vessels: [...vessels.values()], error: error ?? fallback });
     };
-    try {
-      socket = opts.connect ? opts.connect() : new WebSocket(AIS_STREAM_URL);
-    } catch {
-      resolve({ vessels: [], error: 'could not open the AIS stream' });
+    if (!opts.connect && typeof WebSocket === 'undefined') {
+      resolve({
+        vessels: [],
+        error: 'this server runtime has no WebSocket client (Node 22+ needed)',
+      });
       return;
     }
+    try {
+      socket = opts.connect ? opts.connect() : new WebSocket(AIS_STREAM_URL);
+    } catch (err) {
+      resolve({ vessels: [], error: `could not open the AIS stream: ${errorText(err)}` });
+      return;
+    }
+    let subscribed = false;
     // Guard against a socket that never opens or never closes.
     timer = setTimeout(
       () => finish(vessels.size === 0 ? 'no reports received' : null),
@@ -88,6 +103,7 @@ export const collectAisReports = (
     );
     socket.addEventListener('open', () => {
       socket?.send(aisSubscribeMessage(apiKey));
+      subscribed = true;
       if (timer !== undefined) clearTimeout(timer);
       timer = setTimeout(() => finish(null), durationMs);
     });
@@ -103,10 +119,14 @@ export const collectAisReports = (
       const v = parseAisMessage(ev.data, t);
       if (v) vessels.set(v.mmsi, v);
     });
-    socket.addEventListener('error', () => finish('could not reach the AIS stream'));
-    socket.addEventListener('close', () =>
-      finish(vessels.size === 0 ? 'the AIS stream closed before sending reports' : null),
-    );
+    const dropped = () =>
+      vessels.size > 0
+        ? null
+        : subscribed
+          ? AIS_REFUSED_MESSAGE
+          : 'could not reach the AIS stream (connection failed before the subscription)';
+    socket.addEventListener('error', () => finish(dropped()));
+    socket.addEventListener('close', () => finish(dropped()));
   });
 
 /** Shared snapshot cache: Redis across instances, or the in-process map below. */
@@ -279,6 +299,8 @@ export class AisRelay {
     }
   }
 }
+
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 const trim = (r: AisSnapshotResponse, since: number): AisSnapshotResponse =>
   since > 0 ? { ...r, v: r.v.filter((t) => t[5] > since) } : r;
