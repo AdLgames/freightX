@@ -62,3 +62,18 @@
 See `docs/decisions-needed.md` (rows (a)–(ad) plus milestone additions). The ones that block
 launch: real rate sheet figures (d), customs practitioner review of the fixtures (4), email
 provider (s), hosting (k), storage and scanning providers (x, y).
+
+## Handoff: M7 purchase orders (work in progress)
+
+_Last updated: M7 code landed as WIP; tests and verification outstanding._
+
+**Done (on `claude/new-session-ar961c`, unverified against a database):** migration `0012_purchase_orders` (tables, `po_counters`, triggers, RLS, one-accepted-quote-per-PO index) with its migration test; RBAC `order.view/edit/issue`; services `apps/web/app/services/orders/{orders,editor,freight-quote}.server.ts` and pure `schedule.ts`; validators `validators/order.ts`; components `components/orders/*`; routes `/app/orders`, `/app/orders/new`, `/app/orders/:id`, `/app/orders/:id/edit`; quote builder `?po=<id>` pre-fill and `Quote.purchaseOrderId` on save; Home "Payments due" card; Orders nav entry. Unit tests for `schedule.ts` and `validators/order.ts` pass; prettier and typecheck pass.
+
+**Still to do for M7:**
+
+1. DB-backed test `apps/web/app/routes/orders.db.test.ts` (mirror `quotes.db.test.ts`): numbering `PO-YYYY-001/002` per org and year incl. two parallel creates; create/update totals; issue freezes totals and computes deposit/balance for PREPAID, NET and DEPOSIT_BALANCE; trigger refuses editing an issued PO's lines/totals but allows status, payment dates and notes; illegal transition refused; second ACCEPTED quote refused (`PO_QUOTE_ACCEPTED`); `?po=` pre-fills the builder (quantity, PO unit cost) and the saved quote carries `purchaseOrderId`; cross-tenant negatives; RBAC (VIEWER cannot edit, MEMBER cannot issue); no PII in logs.
+2. Run the full gate from the repo root with a Postgres cluster (migrate deploy 0001–0012; suite as superuser and as `harbour_app`): `pnpm exec prettier --check .`, `pnpm run typecheck`, `pnpm run lint`, `pnpm run test`, web and worker builds. Fix whatever fails.
+3. Curl walkthrough of the built server: supplier with DEPOSIT_BALANCE 30% terms → product → PO of 500 units → issue → deposit due → record deposit paid → Get freight quote → save draft → PO detail lists the quote → Home shows the balance due.
+4. Docs: `apps/web/README.md` "Orders (M7)" section, `packages/db/README.md` 0012 note, `docs/phase-1-build-plan.md` M7 → Done, move M7 to Completed above, `docs/decisions-needed.md` row (ag) "PO numbering per year vs global; deposit due date rule".
+
+**Then M8** (bills / AP ledger UI and variance screens using `absorbActuals`, ADR-0014), followed by the housekeeping items listed in the plan (drop `Supplier.countryCode`, tighten the flaky M2 settings tests, tracking retention purge, worker DB role split).
