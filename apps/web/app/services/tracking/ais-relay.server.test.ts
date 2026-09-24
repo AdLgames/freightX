@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AIS_STALE_MS, type AisVessel } from '../../lib/ais-client';
 import { createLogger } from '../logger.server';
 import {
+  AIS_REFUSED_MESSAGE,
   AisRelay,
   MemoryAisCache,
   collectAisReports,
@@ -79,7 +80,12 @@ describe('collectAisReports', () => {
     const p2 = collectAisReports('k', { durationMs: 60_000, connect: () => dropped });
     dropped.emit('open');
     dropped.emit('close');
-    expect((await p2).error).toContain('closed before sending reports');
+    expect((await p2).error).toBe(AIS_REFUSED_MESSAGE);
+
+    const unreachable = new FakeSocket();
+    const p4 = collectAisReports('k', { durationMs: 60_000, connect: () => unreachable });
+    unreachable.emit('error');
+    expect((await p4).error).toContain('before the subscription');
 
     const p3 = collectAisReports('k', {
       durationMs: 60_000,
@@ -87,7 +93,7 @@ describe('collectAisReports', () => {
         throw new Error('no WebSocket');
       },
     });
-    expect((await p3).error).toBe('could not open the AIS stream');
+    expect((await p3).error).toBe('could not open the AIS stream: no WebSocket');
   });
 });
 
