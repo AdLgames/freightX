@@ -7,12 +7,15 @@
  * organisation's shipments, never its shipments, and are only ever cached for minutes.
  */
 export const AIS_STREAM_URL = 'wss://stream.aisstream.io/v0/stream';
-/** [[south, west], [north, east]] — the English Channel, the Dover Strait and the UK south and east coasts. */
+/**
+ * [[south, west], [north, east]] — UK and Irish waters: the Channel and its Western Approaches,
+ * the Irish Sea, the North Sea across to the Danish and Norwegian coasts, and the Scottish north.
+ */
 export const AIS_UK_BOUNDS: readonly [readonly [number, number], readonly [number, number]] = [
-  [49.0, -6.0],
-  [53.0, 3.0],
+  [48.0, -12.0],
+  [61.0, 9.0],
 ];
-export const AIS_MAX_VESSELS = 1500;
+export const AIS_MAX_VESSELS = 4000;
 /** A vessel silent for this long drops off the map. */
 export const AIS_STALE_MS = 15 * 60_000;
 
