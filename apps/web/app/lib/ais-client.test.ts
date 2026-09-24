@@ -3,6 +3,9 @@ import {
   AIS_MAX_VESSELS,
   AIS_STALE_MS,
   aisSubscribeMessage,
+  decodeAisVessels,
+  encodeAisVessels,
+  parseAisError,
   parseAisMessage,
   upsertAisVessel,
   type AisVessel,
@@ -79,5 +82,37 @@ describe('ais-client', () => {
     upsertAisVessel(cache, v('fresh', later), later);
     expect(cache.size).toBe(1);
     expect(cache.has('fresh')).toBe(true);
+  });
+
+  it('recognises the provider refusing a key, and nothing else, as an error', () => {
+    expect(parseAisError('{"error":"Api Key Is Not Valid"}')).toBe('Api Key Is Not Valid');
+    expect(parseAisError(report())).toBeNull();
+    expect(parseAisError('{"error":""}')).toBeNull();
+    expect(parseAisError('nope')).toBeNull();
+  });
+
+  it('round-trips vessels through the compact wire format, rounding for size', () => {
+    const v: AisVessel = {
+      mmsi: '232012345',
+      lat: 50.123456789,
+      lon: -1.23456789,
+      speedKnots: 14.57,
+      courseDeg: 78.6,
+      seenAt: 1000,
+    };
+    const wire = encodeAisVessels([v]);
+    expect(wire).toEqual([['232012345', 50.12346, -1.23457, 14.6, 79, 1000]]);
+    expect(decodeAisVessels(JSON.parse(JSON.stringify(wire)))).toEqual([
+      {
+        mmsi: '232012345',
+        lat: 50.12346,
+        lon: -1.23457,
+        speedKnots: 14.6,
+        courseDeg: 79,
+        seenAt: 1000,
+      },
+    ]);
+    expect(decodeAisVessels([['x', 1, 2, 3], 'junk', [1, 2, 3, 4, 5, 6], null])).toEqual([]);
+    expect(decodeAisVessels('not a list')).toEqual([]);
   });
 });

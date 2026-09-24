@@ -108,21 +108,27 @@ const envSchema = z
     TERMINAL49_WEBHOOK_SECRET: z.string().min(16).max(1024).optional(),
     SPIRE_API_TOKEN: z.string().min(1).max(2048).optional(),
     MARINETRAFFIC_API_KEY: z.string().min(1).max(1024).optional(),
-    /** MapLibre style JSON URL. Default: OpenFreeMap Liberty (keyless). Its origin joins the map route's CSP. */
+    /**
+     * MapLibre style: an https URL, or a path the app serves itself. Default: the built-in
+     * `/map-styles/harbour-blue.json` (navy water, muted land, OpenFreeMap tiles, keyless). The
+     * style's origin joins the map CSP.
+     */
     MAP_STYLE_URL: z
       .string()
-      .url()
-      .refine((u) => /^https:\/\//i.test(u), 'MAP_STYLE_URL must be https.')
-      .default('https://tiles.openfreemap.org/styles/liberty'),
+      .max(2048)
+      .refine(
+        (u) => /^https:\/\/[^\s]+$/i.test(u) || /^\/[^\s]*$/.test(u),
+        'MAP_STYLE_URL must be an https URL or a path starting with /.',
+      )
+      .default('/map-styles/harbour-blue.json'),
     /**
      * Demo fleet (docs/design-system.md, Home): `on` lets a member seed three simulated ships on the
      * Home map and keeps them moving on every map load. Rows are labelled SIMULATED; default off.
      */
     DEMO_FLEET: z.enum(['on', 'off']).default('off'),
     /**
-     * aisstream.io API key: the Home map overlays live AIS traffic around the UK. The key is sent
-     * to signed-in members' browsers (the stream is browser-to-provider, like a map style key),
-     * so use a dedicated free key, never one shared with anything else. Unset → no overlay.
+     * aisstream.io API key: the server relays live AIS traffic around the UK to the Home map
+     * (`/app/api/ais`). The key never leaves the server. Unset → no overlay.
      */
     AISSTREAM_API_KEY: z.string().min(8).max(256).optional(),
     /**

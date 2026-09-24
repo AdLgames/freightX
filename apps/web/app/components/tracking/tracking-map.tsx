@@ -12,8 +12,8 @@ export interface TrackingMapProps {
   /** Where the client fetches fresh state every 60 s (org-scoped, rate-limited). */
   stateUrl: string;
   initialState: MapState;
-  /** Home only: overlay live AIS traffic from aisstream.io (the key reaches the browser). */
-  ais?: { apiKey: string } | null;
+  /** Home only: poll this URL (the server's aisstream relay) and overlay live AIS traffic. */
+  ais?: { url: string } | null;
 }
 
 const LazyMap = lazy(() =>

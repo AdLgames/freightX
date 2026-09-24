@@ -1,11 +1,12 @@
 /**
- * Ambient AIS traffic for the Home map (aisstream.io). Pure helpers, shared by the client map
- * and its tests: the subscription message, position-report parsing and the vessel cache. The
- * WebSocket itself lives in tracking-map.client.tsx. Positions here are never stored server-side
- * and are not the organisation's shipments; they are the live picture around them.
+ * Ambient AIS traffic for the Home map (aisstream.io). Pure helpers shared by the server relay
+ * (`services/tracking/ais-relay.server.ts`), the client map and their tests: the subscription
+ * message, position-report parsing, the bounded vessel cache and the compact wire format between
+ * the relay and the browser. aisstream does not accept browser connections, so the server holds
+ * the socket and the browser polls `/app/api/ais`. Positions are the live picture around the
+ * organisation's shipments, never its shipments, and are only ever cached for minutes.
  */
 export const AIS_STREAM_URL = 'wss://stream.aisstream.io/v0/stream';
-export const AIS_STREAM_ORIGIN = 'wss://stream.aisstream.io';
 /** [[south, west], [north, east]] — the English Channel, the Dover Strait and the UK south and east coasts. */
 export const AIS_UK_BOUNDS: readonly [readonly [number, number], readonly [number, number]] = [
   [49.0, -6.0],
@@ -24,6 +25,26 @@ export interface AisVessel {
   seenAt: number;
 }
 
+/** What `/app/api/ais` returns. `v` is the compact vessel list (see `encodeAisVessels`). */
+export interface AisSnapshotResponse {
+  /** live: reports flowing; warming: first collection in progress; error: the provider refused us. */
+  status: 'live' | 'warming' | 'error';
+  /** Provider or relay message when status is `error` (never the key). */
+  error: string | null;
+  /** When the relay last collected reports (ms since epoch), 0 when it never has. */
+  collectedAt: number;
+  v: AisVesselTuple[];
+}
+
+export type AisVesselTuple = [
+  mmsi: string,
+  lat: number,
+  lon: number,
+  speedKnots: number,
+  courseDeg: number,
+  seenAt: number,
+];
+
 export const aisSubscribeMessage = (
   apiKey: string,
   bounds: typeof AIS_UK_BOUNDS = AIS_UK_BOUNDS,
@@ -36,14 +57,25 @@ export const aisSubscribeMessage = (
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
-/** One `PositionReport` message → a vessel, or null for anything else (or a malformed report). */
-export const parseAisMessage = (raw: string, now: number): AisVessel | null => {
-  let msg: unknown;
+const parseJson = (raw: string): unknown => {
   try {
-    msg = JSON.parse(raw);
+    return JSON.parse(raw);
   } catch {
     return null;
   }
+};
+
+/** aisstream answers a bad key or subscription with `{"error": "..."}`; anything else → null. */
+export const parseAisError = (raw: string): string | null => {
+  const msg = parseJson(raw);
+  if (typeof msg !== 'object' || msg === null) return null;
+  const err = (msg as { error?: unknown }).error;
+  return typeof err === 'string' && err.trim() !== '' ? err.trim().slice(0, 200) : null;
+};
+
+/** One `PositionReport` message → a vessel, or null for anything else (or a malformed report). */
+export const parseAisMessage = (raw: string, now: number): AisVessel | null => {
+  const msg = parseJson(raw);
   if (typeof msg !== 'object' || msg === null) return null;
   const m = msg as {
     MessageType?: unknown;
@@ -77,6 +109,11 @@ export const upsertAisVessel = (
 ): void => {
   cache.delete(vessel.mmsi);
   cache.set(vessel.mmsi, vessel);
+  pruneAisVessels(cache, now);
+};
+
+/** Drops vessels silent for longer than `AIS_STALE_MS` and the oldest beyond the cap (mutates). */
+export const pruneAisVessels = (cache: Map<string, AisVessel>, now: number): void => {
   for (const [key, v] of cache) {
     if (now - v.seenAt > AIS_STALE_MS) cache.delete(key);
   }
@@ -85,4 +122,40 @@ export const upsertAisVessel = (
     if (oldest === undefined) break;
     cache.delete(oldest);
   }
+};
+
+const round = (n: number, places: number): number => {
+  const f = 10 ** places;
+  return Math.round(n * f) / f;
+};
+
+/** Compact tuples for the wire and the cache: ~40 bytes a vessel instead of ~110 as objects. */
+export const encodeAisVessels = (vessels: Iterable<AisVessel>): AisVesselTuple[] =>
+  [...vessels].map((v) => [
+    v.mmsi,
+    round(v.lat, 5),
+    round(v.lon, 5),
+    round(v.speedKnots, 1),
+    Math.round(v.courseDeg),
+    v.seenAt,
+  ]);
+
+/** Inverse of `encodeAisVessels`; malformed tuples are skipped rather than thrown. */
+export const decodeAisVessels = (raw: unknown): AisVessel[] => {
+  if (!Array.isArray(raw)) return [];
+  const out: AisVessel[] = [];
+  for (const t of raw) {
+    if (!Array.isArray(t) || t.length < 6) continue;
+    const row = t as unknown[];
+    const mmsi = row[0];
+    const lat = num(row[1]);
+    const lon = num(row[2]);
+    const speedKnots = num(row[3]);
+    const courseDeg = num(row[4]);
+    const seenAt = num(row[5]);
+    if (typeof mmsi !== 'string' || lat === null || lon === null) continue;
+    if (speedKnots === null || courseDeg === null || seenAt === null) continue;
+    out.push({ mmsi, lat, lon, speedKnots, courseDeg, seenAt });
+  }
+  return out;
 };

@@ -14,8 +14,7 @@ import { loadEnv } from './services/env.server';
 import { createLogger, requestIdFor, type Logger } from './services/logger.server';
 import { applySecurityHeaders } from './services/security-headers.server';
 import { storageUploadOrigin } from './services/documents/storage.server'; // M5
-import { AIS_STREAM_ORIGIN } from './lib/ais-client';
-import { mapCspAdditions, withAisOrigin } from './services/tracking/csp.server';
+import { mapCspAdditions } from './services/tracking/csp.server';
 
 export const streamTimeout = 5_000;
 
@@ -39,17 +38,13 @@ const storageConnectSrc: string[] = (() => {
     return [];
   }
 })();
-// M9: the map's CSP sources (tile host, blob workers, data: icons, the AIS socket when configured)
-// go on EVERY response. The app reaches Home and the tracking detail by client-side navigation
+// M9: the map's CSP sources (tile hosts, blob workers, data: icons) go on EVERY response. The app reaches Home and the tracking detail by client-side navigation
 // (after sign-in, from the sidebar), and a browser keeps the policy of the document it loaded, so
 // per-route additions alone leave the map blank. Env-driven, computed once.
 const mapCsp = (() => {
   try {
     const env = loadEnv();
-    return withAisOrigin(
-      mapCspAdditions(env.MAP_STYLE_URL, env.MAP_TILE_ORIGINS ?? []),
-      env.AISSTREAM_API_KEY ? AIS_STREAM_ORIGIN : null,
-    );
+    return mapCspAdditions(env.MAP_STYLE_URL, env.MAP_TILE_ORIGINS ?? []);
   } catch {
     return {};
   }

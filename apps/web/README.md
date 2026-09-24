@@ -102,7 +102,7 @@ All optional (see the root `.env.example`):
 | `FORWARDER_EORI` / `FORWARDER_NAME` (M2)      | shown in the CDS "authorise the forwarder" step                                      | "{forwarder to be confirmed}"                                         |
 | `DEMO_FLEET` (Home map)                       | `on`: members can load a simulated fleet; it moves on every map load                 | off: the Home map shows real tracked shipments only                   |
 | `CRON_SECRET`                                 | bearer token for `GET /api/cron/fx-refresh` (Vercel Cron)                            | the cron route answers 503; the treasury widget stays empty           |
-| `AISSTREAM_API_KEY` (Home map)                | live AIS traffic overlay around the UK; the key reaches members' browsers            | no overlay                                                            |
+| `AISSTREAM_API_KEY` (Home map)                | live AIS traffic overlay around the UK, relayed by the server (`/app/api/ais`)       | no overlay                                                            |
 
 `TRADE_TARIFF_API_KEY_HEADER` must be confirmed from the Trade Tariff developer portal before
 use; the key is never logged (only its presence, in `app.started`). The fee and inland-adjustment
@@ -453,12 +453,15 @@ Phase 2 tracking, started early at the founder's request and **read-only**: book
 `tracking-map.client.tsx` after hydration — its own chunk). The browser advances the server's
 reckoned position with `app/lib/kinematics-client.ts` (a tested copy of the engine formulas so
 the chunk does not pull in the engine), refetches `/app/api/map-state` every 60 s and glides to
-the new position. Tiles: `MAP_STYLE_URL` (default OpenFreeMap Liberty, keyless); MapTiler or a
-Mapbox style work the same way with their key in the URL — read in the loader, never in client
-code — plus `MAP_TILE_ORIGINS` for extra hosts. `entry.server.tsx` computes the map's CSP
-additions once from the env (`services/tracking/csp.server.ts`: `connect-src` and `img-src` for
-those origins, `img-src data: blob:`, `worker-src blob:` and, with `AISSTREAM_API_KEY`, the
-aisstream WebSocket origin) and passes them to `applySecurityHeaders` on every response, because
+the new position. Style: `MAP_STYLE_URL`, by default the built-in Harbour Blue chart
+(`public/map-styles/harbour-blue.json`: navy water, muted blue land, thin coast and border
+lines, place names only, no roads or landuse; OpenFreeMap vector tiles and glyphs, keyless).
+An https style URL (OpenFreeMap Liberty, MapTiler, a Mapbox style with its key in the URL — read
+in the loader, never in client code) works the same way, plus `MAP_TILE_ORIGINS` for extra
+hosts. `entry.server.tsx` computes the map's CSP additions once from the env
+(`services/tracking/csp.server.ts`: `connect-src` and `img-src` for the style's origin, or
+OpenFreeMap's for a same-origin style, `img-src data: blob:` and `worker-src blob:`) and passes
+them to `applySecurityHeaders` on every response, because
 the map is reached by client-side navigation from any page (the sign-in redirect, for one) and a
 policy set only on the map's route would not cover that document. Routes can still add their own
 sources through `x-harbour-csp-additions` (consumed and removed by `applySecurityHeaders`);
@@ -703,13 +706,18 @@ rows through `withOrg`; every POST carries `<CsrfInput/>`.
   quote's landed-cost estimate when the overrun exceeds 2 %, the category driving it and whether
   categories are still unbilled, linking to `/app/orders/:id/costs`. Neutral when within budget,
   quiet without posted bills. Capped at twelve candidate orders per load.
-- **Live AIS traffic** (`AISSTREAM_API_KEY`, `lib/ais-client.ts`, `tracking-map.client.tsx`): the
-  Home map opens a WebSocket to aisstream.io from the browser and draws position reports inside
-  the UK bounding box as lime dots (cache capped at 1,500 vessels, silent ones dropped after 15
-  minutes, reconnect with backoff). The route adds `connect-src wss://stream.aisstream.io` to its
-  CSP. It is the picture around the organisation's ships, never its ships: real positions for
-  tracked containers still come from the position providers. The key is delivered to signed-in
-  members' browsers, exactly like a map-style key, so use a dedicated free key.
+- **Live AIS traffic** (`AISSTREAM_API_KEY`, `services/tracking/ais-relay.server.ts`,
+  `routes/app.api.ais.tsx`, `lib/ais-client.ts`, `tracking-map.client.tsx`): aisstream.io does
+  not accept browser connections, so the server relays it. A collection opens the stream,
+  subscribes to the UK bounding box, gathers position reports for five seconds and closes; the
+  merged snapshot (capped at 1,500 vessels, silent ones dropped after 15 minutes) is cached in
+  Redis when configured (else in-process) and served fresh for 12 seconds, and a lock keeps one
+  collection running at a time across instances (aisstream allows three connections per
+  account). The browser polls `/app/api/ais?since=` every 10 seconds (members only, 30/min per
+  user) and draws lime dots; the legend shows the vessel count, "warming" on the first
+  collection, or the provider's refusal verbatim (for example an invalid key). It is the picture
+  around the organisation's ships, never its ships: real positions for tracked containers still
+  come from the position providers. The key never leaves the server.
 - **Treasury** (`components/home/treasury-card.tsx`, `services/fx-treasury.server.ts`): GBP/USD
   and GBP/EUR from the ECB reference rates in the FX store (`FxRateStore.history`, never an API
   call in the request path, §5.7) with the change against the newest rate on or before seven

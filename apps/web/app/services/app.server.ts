@@ -117,7 +117,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
   // end M6
   // M5
   const documents = createDocumentServices({ env, logger, redis, prisma: auth.prisma });
-  const tracking = createTrackingServices({ env, logger, prisma: auth.prisma, now }); // M9
+  const tracking = createTrackingServices({ env, logger, prisma: auth.prisma, now, redis }); // M9
 
   logger.info('app.started', {
     nodeEnv: env.NODE_ENV,

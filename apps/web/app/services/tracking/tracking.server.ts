@@ -12,8 +12,9 @@ import { PrismaTrackingStore, type PrismaClient } from '@harbour/db';
 import type { Env } from '../env.server';
 import type { Logger } from '../logger.server';
 import type { CspAdditions } from '../security-headers.server';
-import { AIS_STREAM_ORIGIN } from '../../lib/ais-client';
-import { mapCspAdditions, withAisOrigin } from './csp.server';
+import type { RedisClient } from '../redis.server';
+import { AisRelay, MemoryAisCache, redisAisCache } from './ais-relay.server';
+import { mapCspAdditions } from './csp.server';
 
 /**
  * M9 (ADR-0017) — tracking composition for the web app: the milestone provider (subscribe /
@@ -46,12 +47,12 @@ export interface TrackingServices {
   store: PrismaTrackingStore | null;
   queue: TrackingQueue;
   mapStyleUrl: string;
-  /** Map CSP sources (tiles, blob workers, data icons, and the AIS socket when configured), applied to every workspace document by the /app layout. */
+  /** Map CSP sources (tile hosts, blob workers, data icons), applied to every response by entry.server. */
   mapCsp: CspAdditions;
   /** `DEMO_FLEET=on`: the Home map offers a simulated fleet and advances it on every map load. */
   demoFleetEnabled: boolean;
-  /** `AISSTREAM_API_KEY`: live AIS traffic overlay on the Home map (key reaches the browser). */
-  aisStreamKey: string | null;
+  /** `AISSTREAM_API_KEY`: the live AIS relay behind `/app/api/ais` (the key stays server-side), or null. */
+  ais: AisRelay | null;
   /** Webhook provider for `/webhooks/tracking/:providerId`, or null for an unknown id. */
   webhookProvider(providerId: string): MilestoneProvider | null;
   webhookSecret(providerId: string): string | undefined;
@@ -64,6 +65,8 @@ export interface TrackingDeps {
   now?: () => Date;
   /** Test seam: replaces the BullMQ producer. */
   queue?: TrackingQueue;
+  /** Shared AIS snapshot cache across instances; without it the relay caches in-process. */
+  redis?: RedisClient | null;
 }
 
 const loggerAsTrackingLog = (logger: Logger): TrackingLog => ({
@@ -163,12 +166,16 @@ export const createTrackingServices = (deps: TrackingDeps): TrackingServices => 
     store,
     queue,
     mapStyleUrl: env.MAP_STYLE_URL,
-    mapCsp: withAisOrigin(
-      mapCspAdditions(env.MAP_STYLE_URL, env.MAP_TILE_ORIGINS ?? []),
-      env.AISSTREAM_API_KEY ? AIS_STREAM_ORIGIN : null,
-    ),
+    mapCsp: mapCspAdditions(env.MAP_STYLE_URL, env.MAP_TILE_ORIGINS ?? []),
     demoFleetEnabled: env.DEMO_FLEET === 'on',
-    aisStreamKey: env.AISSTREAM_API_KEY ?? null,
+    ais: env.AISSTREAM_API_KEY
+      ? new AisRelay({
+          apiKey: env.AISSTREAM_API_KEY,
+          cache: deps.redis ? redisAisCache(deps.redis) : new MemoryAisCache(),
+          log: logger,
+          now: () => now().getTime(),
+        })
+      : null,
     webhookProvider: (providerId) => milestoneProviderForWebhook(providerId, env, { now }),
     webhookSecret: (providerId) =>
       providerId === 'terminal49' ? env.TERMINAL49_WEBHOOK_SECRET : undefined,
