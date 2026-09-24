@@ -49,6 +49,10 @@ export const TENANT_MODELS = [
   'PurchaseOrder',
   'PurchaseOrderItem',
   'PoCounter',
+  // M8 (ADR-0014)
+  'Bill',
+  'BillLine',
+  'BillPayment',
 ] as const;
 export type TenantModel = (typeof TENANT_MODELS)[number];
 
@@ -91,6 +95,10 @@ export const TENANT_TABLES: Readonly<Record<TenantModel, string>> = {
   PurchaseOrder: 'purchase_orders',
   PurchaseOrderItem: 'purchase_order_items',
   PoCounter: 'po_counters',
+  // M8 (ADR-0014)
+  Bill: 'bills',
+  BillLine: 'bill_lines',
+  BillPayment: 'bill_payments',
 };
 
 export const isTenantModel = (model: string): model is TenantModel =>

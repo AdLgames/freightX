@@ -2221,3 +2221,39 @@ fieldset.readonly .form-actions {
 .payments-due .draft-row {
   padding: 10px 0;
 }
+
+/* ---------- M8: bills, costs and variance ---------- */
+.status-pill.bill-posted {
+  background: var(--cyan-700);
+}
+.bill-editor .item-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.bill-editor .line-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.payment-form {
+  border-top: 1px solid var(--slate-100);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.variance-over {
+  color: var(--red-600);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.variance-under {
+  color: var(--emerald-600);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.variance-level {
+  font-variant-numeric: tabular-nums;
+}

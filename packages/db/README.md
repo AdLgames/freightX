@@ -448,6 +448,48 @@ status = 'ACCEPTED'`): several quotes may price one order, at most one is accept
   the policies, the grants and idempotency; `apps/web/app/routes/orders.db.test.ts` exercises the
   numbering, the freeze, the transitions, the one-accepted-quote rule and RLS against a database.
 
+## Bills (migration 0013, M8, ADR-0014)
+
+`0013_bills` = generated DDL (part 1) + hand-written, idempotent rules (part 2); additive,
+rollback note in the file. Actual costs as an accounts-payable sub-ledger.
+
+- Enums (additive only): `vendor_type` (`SUPPLIER`, `FORWARDER`, `CUSTOMS_BROKER`, `HMRC`,
+  `OTHER`), `bill_type` (`SUPPLIER_INVOICE`, `FREIGHT_INVOICE`, `CUSTOMS_CHARGES`,
+  `CUSTOMS_STATEMENT`, `OTHER`), `bill_status` (`DRAFT`, `POSTED`, `PAID`), `cost_category`
+  (one-to-one with the engine's `COST_CATEGORIES`), `unplanned_reason`.
+- New tenant tables (denormalised `organization_id`, RLS `ENABLE` + `FORCE`, `<table>_tenant`
+  policy, grants to `harbour_app`, all in `TENANT_MODELS`/`TENANT_TABLES`):
+  - `bills` — composite FKs `(supplier_id, organization_id) → suppliers` and
+    `(document_id, organization_id) → documents` (the invoice in the vault; the target unique index
+    on `documents` is added here). CHECKs: currency format, `total_amount >= 0` (credit notes are
+    flagged with `is_credit_note`, never negative), a non-blank reference, `SUPPLIER` bills name a
+    supplier row and every other vendor a `vendor_name`, the status agrees with `posted_at` /
+    `paid_at`, `due_on >= issued_on`. Partial unique indexes `bills_one_reference_per_supplier`
+    and `bills_one_reference_per_vendor` (`lower(vendor_name)`): a vendor's reference is unique in
+    the organisation.
+  - `bill_lines` — `(bill_id, organization_id)` → bills `ON DELETE CASCADE`,
+    `(purchase_order_id, organization_id)` → purchase_orders `ON DELETE RESTRICT`, and the
+    three-column `(purchase_order_item_id, purchase_order_id, organization_id)` →
+    purchase_order_items (target unique index added here), so a line's item always belongs to the
+    line's order and tenant. `amount` may be negative (a discount line); `unplanned_reason` is set
+    iff `cost_category = 'UNPLANNED'`.
+  - `bill_payments` — `(bill_id, organization_id)` → bills `ON DELETE CASCADE`; `amount > 0`,
+    `fx_rate > 0` (GBP per 1 unit of the bill currency, as paid), `amount_gbp >= 0`.
+- Trigger `bills_guard` (`BEFORE UPDATE OR DELETE`): transitions `DRAFT>POSTED`, `POSTED>PAID`,
+  `PAID>POSTED`; `DRAFT>POSTED` requires at least one line and `sum(bill_lines.amount) =
+total_amount`; once not DRAFT only `status`, `paid_at`, `document_id`, `notes` and `updated_at`
+  may change (same `to_jsonb` technique as 0002/0012); `DELETE` for DRAFT only. Trigger
+  `bill_lines_frozen`: no `INSERT`/`UPDATE`/`DELETE` on the lines of a posted bill. Trigger
+  `bill_payments_guard`: `INSERT` only when the bill is POSTED or PAID, `UPDATE` never
+  (append-only), `DELETE` allowed. Error messages are prefixed `harbour:` and carry the reference
+  and status (the posting check quotes the two totals); `apps/web` maps them to `NOT_BALANCED`,
+  `NO_LINES`, `FROZEN`, `ILLEGAL_TRANSITION`, `WRONG_STATUS`.
+- Hard-deleting an organisation (§7.3 maintenance job) must disable the three triggers for its
+  run, as `apps/web/app/routes/bills.db.test.ts` does in its superuser cleanup.
+- `test/migrations.test.ts` checks the DDL shape, the CHECKs, the partial indexes, the triggers,
+  the policies, the grants and idempotency; `apps/web/app/routes/bills.db.test.ts` exercises
+  posting, the freeze, payments and RLS against a database.
+
 ## Field encryption (M2, §7.3)
 
 `src/crypto.ts` implements envelope encryption for sensitive columns; today

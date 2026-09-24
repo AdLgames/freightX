@@ -757,3 +757,87 @@ the frozen figures, the 0012 triggers rendered friendly, the status walk and ill
 transitions, payments by date and the Home card, `?po=` pre-fill, the saved quote's
 `purchaseOrderId` and the one-accepted-quote rule, RBAC, cross-tenant negatives and the no-PII
 log rule).
+
+## Bills and variance (M8)
+
+Actual costs as an accounts-payable sub-ledger (ADR-0014). Routes: `/app/bills` (list,
+`app.bills.tsx`), `/app/bills/new` and `/app/bills/:id/edit` (the editor, `app.bills_.new.tsx` /
+`app.bills_.$id_.edit.tsx`), `/app/bills/:id` (detail, posting, payments, `app.bills_.$id.tsx`),
+`/app/orders/:id/costs` (costs and variance for one purchase order, `app.orders_.$id_.costs.tsx`).
+Services in `app/services/bills/` (`bills.server.ts` persistence, `editor.server.ts` the editor's
+option lists and no-JS intents, `variance.server.ts` the costs page, pure `actuals.ts` the
+ledger-to-engine glue and `totals.ts` the running total), schemas in `app/validators/bill.ts`,
+components in `app/components/bills/`. Permissions: `bill.view` (every role), `bill.edit` (MEMBER
+and up: record and edit drafts, record or remove payments, delete drafts), `bill.post` (OWNER/
+ADMIN: post — the bill becomes a financial record).
+
+### Bills
+
+- **A bill is one vendor document**: vendor type (a supplier from the list, or a named forwarder,
+  customs broker, HMRC or other), kind (supplier invoice, freight invoice, customs charges, HMRC
+  statement, other), the vendor's reference, currency, total, issue and due dates, notes, and
+  **lines**: each booked to a purchase order (and optionally one of its lines, when the cost
+  belongs to that SKU) under a cost category that maps one-to-one onto the engine's
+  `COST_CATEGORIES` (so every variance is a direct subtraction). Unplanned costs say why
+  (demurrage, detention, storage, examination, other). A line may be negative (a discount);
+  the total may not — a **credit note** is flagged instead and its lines reduce the actuals.
+- **Reference rule.** The same reference from the same vendor is refused (partial unique indexes
+  in migration 0013: per supplier, and per case-insensitive vendor name). Catches the same invoice
+  keyed in twice.
+- **Posting** (DRAFT → POSTED, `bill.post`) needs at least one line and lines that add up to the
+  total exactly; the page says what is off, the route refuses with the two amounts, and the
+  trigger is the backstop. Posted bills are frozen (status, paid date, document and notes aside)
+  and so are their lines; corrections are credit notes. Drafts can be edited and deleted.
+- **Payments** are recorded on posted bills only: date, amount in the bill currency and the
+  rate the bank actually applied (GBP per unit; forced to 1 for GBP bills). The GBP amount is
+  computed, never typed, so the ledger reconciles with the statement. A payment past the
+  outstanding amount is refused; when the payments cover the total the bill is PAID (paid on the
+  last payment's date); removing a payment reopens it as POSTED. Payment rows are append-only
+  (no UPDATE — delete and record again; both audited).
+- **Audit** (`recordAudit`, ids, statuses, enum values, counts and dates only — never amounts):
+  `bill.create`, `bill.update`, `bill.post`, `bill.delete`, `bill.payment`,
+  `bill.payment_removed`.
+- The editor is flat HTML (`line_<i>_<field>`) with `intent` buttons (`recalculate`, `add-line`,
+  `save`) or a `removeLine` index, so it works without JavaScript; `?order=<id>` starts a
+  supplier bill from a purchase order. Bills are not plan-gated.
+
+### Costs and variance
+
+`/app/orders/:id/costs` recomputes on every view — nothing is stored:
+
+- **Estimate** = the order's accepted quote (`quoteRowToResult`), per line and per category
+  (`estimateFromQuoteLine`: goods, assists, freight to/after the border, origin and destination
+  fees, insurance, duty, import VAT, deferment fee; the platform fee sits in OTHER; clearance and
+  unplanned are never estimated; the inland VAT-base adjustment is not a cost and is left out).
+- **Actuals** = the posted bills with a line on the order, converted to GBP by `billsToActuals`
+  (ADR-0014 "exchange rates live on payments"): a GBP bill is its total; the paid part of a
+  foreign-currency bill is the sum of the payments' GBP amounts; the unpaid remainder is converted
+  at today's HMRC monthly rate (ECB as fallback, then the quote's own snapshot rate) and **marked
+  as an estimate**; with no rate at all the bill is left out with a warning rather than guessed.
+  The bill's GBP total is split across its lines by largest remainder in proportion to the line
+  amounts, so lines add up to the bill to the penny; a credit note reverses the sign. Only the
+  order's own lines count (one forwarder invoice may span two orders).
+- **Maths** = the engine's `absorbActuals` (`packages/engine/src/actuals.ts`, golden-tested):
+  variance by category (positive = unfavourable), missing categories (estimated, no bill yet),
+  actual landed cost per SKU with the biggest drivers, shared costs apportioned the way the quote
+  did (physical costs by chargeable weight, duty by customs value, insurance and goods by value),
+  import VAT excluded from landed cost only when it is recoverable.
+- Without an accepted quote the page shows the actuals by category and says variance needs one.
+  The purchase order page links here ("Costs and variance") and to "Record a bill".
+
+### Not in this slice
+
+Attaching the invoice from the vault to a bill (`Bill.documentId` exists, no UI), a Home widget
+for actuals completeness, the "split an HMRC statement across orders" helper (ADR-0014
+consequences), and the Xero/QuickBooks export.
+
+### Tests
+
+`validators/bill.test.ts`, `services/bills/actuals.test.ts` (GBP conversion by payments, HMRC /
+quote fallbacks, largest-remainder split, discounts and credit notes, the category mapping) and
+`routes/bills.db.test.ts` (with `DATABASE_URL`: the editor and its refusals incl. foreign and
+cancelled orders and an item of another order, drafts, the reference rule, posting balanced and
+unbalanced with the trigger backstop, the frozen rules, payments incl. GBP at rate 1 / overpayment
+/ append-only / settle and reopen, the costs page against an accepted quote with FX from payments,
+a netted credit note and demurrage landing on the bulky SKU, an order without a quote, a bill
+spanning two orders, RBAC, cross-tenant negatives and the no-PII log rule).

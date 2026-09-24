@@ -35,6 +35,10 @@ const BRIEF: Record<Action, readonly Role[]> = {
   'order.view': ['OWNER', 'ADMIN', 'MEMBER', 'VIEWER'],
   'order.edit': ['OWNER', 'ADMIN', 'MEMBER'],
   'order.issue': ['OWNER', 'ADMIN'],
+  // M8 (ADR-0014)
+  'bill.view': ['OWNER', 'ADMIN', 'MEMBER', 'VIEWER'],
+  'bill.edit': ['OWNER', 'ADMIN', 'MEMBER'],
+  'bill.post': ['OWNER', 'ADMIN'],
 };
 
 describe('rbac matrix', () => {
@@ -66,7 +70,7 @@ describe('rbac matrix', () => {
 
   it('VIEWER is read-only', () => {
     const allowed = ACTIONS.filter((a) => can('VIEWER', a));
-    expect(allowed).toEqual(['quote.view', 'doc.download', 'order.view']); // M7: order.view
+    expect(allowed).toEqual(['quote.view', 'doc.download', 'order.view', 'bill.view']); // M7 order.view, M8 bill.view
   });
 
   it('fails closed on unknown roles or actions', () => {

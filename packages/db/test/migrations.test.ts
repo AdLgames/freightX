@@ -76,6 +76,10 @@ describe('schema ↔ allow-lists', () => {
         'purchase_orders',
         'purchase_order_items',
         'po_counters',
+        // M8 (ADR-0014)
+        'bills',
+        'bill_lines',
+        'bill_payments',
       ].sort(),
     );
   });
@@ -602,6 +606,134 @@ describe('0012_purchase_orders', () => {
 
   it('installs RLS and grants for the three tables', () => {
     for (const table of ['purchase_orders', 'purchase_order_items', 'po_counters']) {
+      expect(handWritten).toContain(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(handWritten).toContain(`ALTER TABLE "${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(handWritten).toMatch(new RegExp(`CREATE POLICY ${table}_tenant ON "${table}"`));
+      expect(handWritten).toContain(
+        `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "${table}" TO harbour_app;`,
+      );
+    }
+    expect(sql).toMatch(/## Rollback/);
+    expect(sql).toMatch(/Reversible: yes/);
+  });
+
+  it('the hand-written part is idempotent', () => {
+    for (const m of handWritten.matchAll(/ADD CONSTRAINT (\w+)/g)) {
+      expect(handWritten).toContain(`DROP CONSTRAINT IF EXISTS ${m[1]};`);
+    }
+    for (const m of handWritten.matchAll(/CREATE POLICY (\w+) ON "(\w+)"/g)) {
+      expect(handWritten).toContain(`DROP POLICY IF EXISTS ${m[1]} ON "${m[2]}";`);
+    }
+    for (const m of handWritten.matchAll(/CREATE TRIGGER (\w+)\s+BEFORE [A-Z ]+ ON "(\w+)"/g)) {
+      expect(handWritten).toContain(`DROP TRIGGER IF EXISTS ${m[1]} ON "${m[2]}";`);
+    }
+    for (const m of handWritten.matchAll(/CREATE UNIQUE INDEX (\w+)/g)) {
+      expect(handWritten).toContain(`DROP INDEX IF EXISTS ${m[1]};`);
+    }
+    expect(handWritten).not.toMatch(/CREATE FUNCTION/); // only CREATE OR REPLACE
+  });
+});
+
+// M8 (ADR-0014)
+describe('0013_bills', () => {
+  const sql = readMigration('0013_bills');
+  const [generated = '', handWritten = ''] = sql.split('Part 2 — hand-written');
+
+  it('is additive: five enums, three tenant tables, the composite FKs and the two new unique targets', () => {
+    expect(generated).toContain(
+      `CREATE TYPE "vendor_type" AS ENUM ('SUPPLIER', 'FORWARDER', 'CUSTOMS_BROKER', 'HMRC', 'OTHER');`,
+    );
+    expect(generated).toContain(
+      `CREATE TYPE "bill_type" AS ENUM ('SUPPLIER_INVOICE', 'FREIGHT_INVOICE', 'CUSTOMS_CHARGES', 'CUSTOMS_STATEMENT', 'OTHER');`,
+    );
+    expect(generated).toContain(`CREATE TYPE "bill_status" AS ENUM ('DRAFT', 'POSTED', 'PAID');`);
+    // One-to-one with the engine's COST_CATEGORIES.
+    expect(generated).toContain(
+      `CREATE TYPE "cost_category" AS ENUM ('GOODS', 'ASSISTS', 'FREIGHT_TO_BORDER', 'FREIGHT_POST_BORDER', 'ORIGIN_FEES', 'DESTINATION_FEES', 'CLEARANCE', 'INSURANCE', 'DUTY', 'IMPORT_VAT', 'DEFERMENT_FEE', 'UNPLANNED', 'OTHER');`,
+    );
+    expect(generated).toContain(
+      `CREATE TYPE "unplanned_reason" AS ENUM ('DEMURRAGE', 'DETENTION', 'STORAGE', 'CUSTOMS_EXAMINATION', 'OTHER');`,
+    );
+    for (const table of ['bills', 'bill_lines', 'bill_payments']) {
+      expect(generated).toContain(`CREATE TABLE "${table}"`);
+    }
+    // Money: Decimal(14,2) amounts in the bill currency, Decimal(14,6) FX on payments (ADR-0014).
+    expect(generated).toContain('"total_amount" DECIMAL(14,2) NOT NULL');
+    expect(generated).toContain('"amount" DECIMAL(14,2) NOT NULL');
+    expect(generated).toContain('"fx_rate" DECIMAL(14,6) NOT NULL');
+    expect(generated).toContain('"amount_gbp" DECIMAL(14,2) NOT NULL');
+    expect(generated).toContain('"issued_on" DATE NOT NULL');
+    expect(generated).toContain('"paid_on" DATE NOT NULL');
+    // Composite tenant FKs.
+    expect(generated).toContain(
+      'ALTER TABLE "bills" ADD CONSTRAINT "bills_supplier_id_organization_id_fkey" FOREIGN KEY ("supplier_id", "organization_id") REFERENCES "suppliers"("id", "organization_id") ON DELETE RESTRICT ON UPDATE CASCADE;',
+    );
+    expect(generated).toContain(
+      'ALTER TABLE "bills" ADD CONSTRAINT "bills_document_id_organization_id_fkey" FOREIGN KEY ("document_id", "organization_id") REFERENCES "documents"("id", "organization_id") ON DELETE RESTRICT ON UPDATE CASCADE;',
+    );
+    expect(generated).toContain(
+      'ALTER TABLE "bill_lines" ADD CONSTRAINT "bill_lines_bill_id_organization_id_fkey" FOREIGN KEY ("bill_id", "organization_id") REFERENCES "bills"("id", "organization_id") ON DELETE CASCADE ON UPDATE CASCADE;',
+    );
+    expect(generated).toContain(
+      'ALTER TABLE "bill_lines" ADD CONSTRAINT "bill_lines_purchase_order_id_organization_id_fkey" FOREIGN KEY ("purchase_order_id", "organization_id") REFERENCES "purchase_orders"("id", "organization_id") ON DELETE RESTRICT ON UPDATE CASCADE;',
+    );
+    expect(generated).toContain(
+      'FOREIGN KEY ("purchase_order_item_id", "purchase_order_id", "organization_id") REFERENCES "purchase_order_items"("id", "purchase_order_id", "organization_id")',
+    );
+    expect(generated).toContain(
+      'ALTER TABLE "bill_payments" ADD CONSTRAINT "bill_payments_bill_id_organization_id_fkey" FOREIGN KEY ("bill_id", "organization_id") REFERENCES "bills"("id", "organization_id") ON DELETE CASCADE ON UPDATE CASCADE;',
+    );
+    expect(generated).toContain(
+      'CREATE UNIQUE INDEX "documents_id_organization_id_key" ON "documents"("id", "organization_id");',
+    );
+    expect(generated).toContain(
+      'CREATE UNIQUE INDEX "purchase_order_items_id_purchase_order_id_organization_id_key" ON "purchase_order_items"("id", "purchase_order_id", "organization_id");',
+    );
+    const statements = sql.replace(/--[^\n]*/g, '');
+    expect(statements).not.toMatch(/\bDROP (COLUMN|TABLE|TYPE)\b/);
+    expect(statements).not.toMatch(/\bRENAME\b|ALTER COLUMN/);
+  });
+
+  it('installs the CHECKs, the reference-per-vendor partial indexes and the three triggers', () => {
+    expect(handWritten).toContain("CHECK (currency ~ '^[A-Z]{3}$')");
+    expect(handWritten).toContain('CHECK (total_amount >= 0)');
+    expect(handWritten).toContain("(vendor_type = 'SUPPLIER' AND supplier_id IS NOT NULL)");
+    expect(handWritten).toContain(
+      "(vendor_type <> 'SUPPLIER' AND supplier_id IS NULL AND vendor_name IS NOT NULL AND btrim(vendor_name) <> '')",
+    );
+    expect(handWritten).toContain("(status = 'DRAFT' AND posted_at IS NULL AND paid_at IS NULL)");
+    expect(handWritten).toContain(
+      "(status = 'PAID' AND posted_at IS NOT NULL AND paid_at IS NOT NULL)",
+    );
+    expect(handWritten).toContain('CHECK (due_on IS NULL OR due_on >= issued_on)');
+    expect(handWritten).toContain(
+      "CHECK ((cost_category = 'UNPLANNED') = (unplanned_reason IS NOT NULL))",
+    );
+    expect(handWritten).toContain('CHECK (amount > 0 AND fx_rate > 0 AND amount_gbp >= 0)');
+    expect(handWritten).toMatch(
+      /CREATE UNIQUE INDEX bills_one_reference_per_supplier\s+ON "bills" \("organization_id", "supplier_id", "reference_number"\) WHERE supplier_id IS NOT NULL;/,
+    );
+    expect(handWritten).toMatch(
+      /CREATE UNIQUE INDEX bills_one_reference_per_vendor\s+ON "bills" \("organization_id", lower\("vendor_name"\), "reference_number"\) WHERE supplier_id IS NULL;/,
+    );
+    expect(handWritten).toMatch(/CREATE TRIGGER bills_guard\s+BEFORE UPDATE OR DELETE ON "bills"/);
+    expect(handWritten).toMatch(
+      /CREATE TRIGGER bill_lines_frozen\s+BEFORE INSERT OR UPDATE OR DELETE ON "bill_lines"/,
+    );
+    expect(handWritten).toMatch(
+      /CREATE TRIGGER bill_payments_guard\s+BEFORE INSERT OR UPDATE OR DELETE ON "bill_payments"/,
+    );
+    // Posting compares the lines with the total; the frozen-row comparison strips exactly
+    // status, paid_at, document_id, notes and updated_at.
+    expect(handWritten).toContain('IF line_sum <> NEW.total_amount THEN');
+    expect(handWritten).toContain(
+      "(to_jsonb(OLD) - 'status' - 'paid_at' - 'document_id' - 'notes' - 'updated_at')",
+    );
+    expect(handWritten).toContain("ARRAY['DRAFT>POSTED', 'POSTED>PAID', 'PAID>POSTED']");
+  });
+
+  it('installs RLS and grants for the three tables', () => {
+    for (const table of ['bills', 'bill_lines', 'bill_payments']) {
       expect(handWritten).toContain(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
       expect(handWritten).toContain(`ALTER TABLE "${table}" FORCE ROW LEVEL SECURITY;`);
       expect(handWritten).toMatch(new RegExp(`CREATE POLICY ${table}_tenant ON "${table}"`));

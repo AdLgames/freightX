@@ -138,6 +138,12 @@ export {
   ContainerSizeType, // M9
   VesselPollState, // M9
   PurchaseOrderStatus, // M7 (ADR-0013)
+  // M8 (ADR-0014)
+  VendorType,
+  BillType,
+  BillStatus,
+  CostCategory,
+  UnplannedReason,
 } from '../generated/client/index.js';
 export type {
   PrismaClient,
@@ -174,4 +180,8 @@ export type {
   PurchaseOrder,
   PurchaseOrderItem,
   PoCounter,
+  // M8 (ADR-0014)
+  Bill,
+  BillLine,
+  BillPayment,
 } from '../generated/client/index.js';

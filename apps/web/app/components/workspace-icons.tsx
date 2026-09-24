@@ -1,4 +1,14 @@
-import { ClipboardList, FileText, Home, Package, Settings, Ship, Truck, Users } from 'lucide-react';
+import {
+  ClipboardList,
+  FileText,
+  Home,
+  Package,
+  Receipt,
+  Settings,
+  Ship,
+  Truck,
+  Users,
+} from 'lucide-react';
 import type { WorkspaceNavItem } from './workspace-nav';
 
 /** Inline SVG icons (lucide-react renders SVG in the document; no external assets, CSP-safe). */
@@ -11,6 +21,8 @@ export function NavIcon({ name }: { name: WorkspaceNavItem['icon'] }) {
       return <FileText {...props} />;
     case 'orders': // M7
       return <ClipboardList {...props} />;
+    case 'bills': // M8
+      return <Receipt {...props} />;
     case 'tracking':
       return <Ship {...props} />;
     case 'products':

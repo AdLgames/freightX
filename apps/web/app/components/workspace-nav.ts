@@ -17,6 +17,7 @@ export interface WorkspaceNavItem {
     | 'home'
     | 'quotes'
     | 'orders' // M7
+    | 'bills' // M8
     | 'tracking'
     | 'products'
     | 'suppliers'
@@ -28,6 +29,7 @@ export const WORKSPACE_NAV: readonly WorkspaceNavItem[] = [
   { to: '/app', label: 'Home', end: true, icon: 'home' },
   { to: '/app/quotes', label: 'Quotes', permission: 'quote.view', icon: 'quotes' },
   { to: '/app/orders', label: 'Orders', permission: 'order.view', icon: 'orders' }, // M7 (ADR-0013)
+  { to: '/app/bills', label: 'Bills', permission: 'bill.view', icon: 'bills' }, // M8 (ADR-0014)
   { to: '/app/tracking', label: 'Tracking', icon: 'tracking' }, // M9 (ADR-0017): view for every role; tracking needs shipment.track
   { to: '/app/products', label: 'Products', icon: 'products' },
   { to: '/app/suppliers', label: 'Suppliers', icon: 'suppliers' }, // M3

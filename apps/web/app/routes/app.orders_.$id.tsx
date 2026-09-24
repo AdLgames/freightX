@@ -92,6 +92,7 @@ export const loader = async ({ request, params }: Route.LoaderArgs) => {
   const edit = can(ctx.role, 'order.edit');
   const issue = can(ctx.role, 'order.issue');
   const quoteEdit = can(ctx.role, 'quote.edit');
+  const billEdit = can(ctx.role, 'bill.edit'); // M8
   const open = !['DRAFT', 'CLOSED', 'CANCELLED'].includes(view.status);
   return {
     order: view,
@@ -103,6 +104,9 @@ export const loader = async ({ request, params }: Route.LoaderArgs) => {
       cancel: canTransition(view.status, 'CANCELLED') && (view.status === 'DRAFT' ? edit : issue),
       recordPayment: edit && open,
       getQuote: quoteEdit && view.status !== 'CANCELLED' && view.status !== 'CLOSED',
+      // M8 (ADR-0014): bills are booked against issued orders; the costs page reads for every role.
+      recordBill: billEdit && view.status !== 'DRAFT' && view.status !== 'CANCELLED',
+      costs: can(ctx.role, 'bill.view') && view.status !== 'DRAFT',
     },
     issueBlockedBy:
       view.status !== 'DRAFT'
@@ -352,6 +356,16 @@ export default function OrderDetail({ loaderData, actionData }: Route.ComponentP
         {allowed.getQuote ? (
           <Link to={`/app/quotes/new?po=${o.id}`} className="button">
             Get freight quote
+          </Link>
+        ) : null}
+        {allowed.costs ? (
+          <Link to={`/app/orders/${o.id}/costs`} className="button secondary">
+            Costs and variance
+          </Link>
+        ) : null}
+        {allowed.recordBill ? (
+          <Link to={`/app/bills/new?order=${o.id}`} className="button secondary">
+            Record a bill
           </Link>
         ) : null}
         {allowed.cancel ? (

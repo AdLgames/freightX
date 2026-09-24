@@ -92,6 +92,10 @@ model Organization {
   purchaseOrders     PurchaseOrder[]
   purchaseOrderItems PurchaseOrderItem[]
   poCounters         PoCounter[]
+  // M8 (ADR-0014)
+  bills              Bill[]
+  billLines          BillLine[]
+  billPayments       BillPayment[]
 
   @@map("organizations")
 }
@@ -326,6 +330,7 @@ model Supplier {
   paymentTerms    PaymentTerms?
   payoutMethods   PayoutMethod[]
   purchaseOrders  PurchaseOrder[] // M7 (ADR-0013)
+  bills           Bill[] // M8 (ADR-0014): supplier invoices and credit notes
 
   @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from products (keeps denormalised org ids consistent)
   @@index([organizationId])
@@ -711,6 +716,7 @@ model PurchaseOrder {
   pickupLocation PickupLocation?     @relation(fields: [pickupLocationId, supplierId, organizationId], references: [id, supplierId, organizationId])
   items          PurchaseOrderItem[]
   quotes         Quote[]
+  billLines      BillLine[] // M8 (ADR-0014): actual costs booked against this order
 
   @@unique([organizationId, poNumber])
   @@unique([id, organizationId]) // target of the composite FKs from purchase_order_items and quotes
@@ -737,7 +743,9 @@ model PurchaseOrderItem {
   organization  Organization  @relation(fields: [organizationId], references: [id])
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId, organizationId], references: [id, organizationId], onDelete: Cascade)
   product       Product       @relation(fields: [productId, organizationId], references: [id, organizationId])
+  billLines     BillLine[] // M8 (ADR-0014): costs booked against this SKU
 
+  @@unique([id, purchaseOrderId, organizationId]) // M8: target of the three-column FK from bill_lines
   @@index([organizationId])
   @@index([purchaseOrderId])
   @@map("purchase_order_items")
@@ -756,6 +764,150 @@ model PoCounter {
 
   @@unique([organizationId, year])
   @@map("po_counters")
+}
+
+// ---------------------------------------------------------------------------------------------
+// M8 (ADR-0014): actual costs as an accounts-payable sub-ledger. A Bill is one vendor document
+// (supplier invoice, forwarder invoice, customs charges, HMRC statement); its lines carry the
+// costing link to a purchase order (and optionally one of its items); payments carry the FX
+// actually paid. Posted bills are immutable (trigger bills_guard, migration 0013); corrections
+// are credit notes. Variance and per-SKU absorption are computed by the engine's `absorbActuals`
+// from posted lines converted to GBP — nothing here is a stored result.
+// ---------------------------------------------------------------------------------------------
+
+enum VendorType {
+  SUPPLIER
+  FORWARDER
+  CUSTOMS_BROKER
+  HMRC
+  OTHER
+
+  @@map("vendor_type")
+}
+
+enum BillType {
+  SUPPLIER_INVOICE
+  FREIGHT_INVOICE
+  CUSTOMS_CHARGES
+  CUSTOMS_STATEMENT
+  OTHER
+
+  @@map("bill_type")
+}
+
+enum BillStatus {
+  DRAFT
+  POSTED
+  PAID
+
+  @@map("bill_status")
+}
+
+/// One-to-one with the engine's COST_CATEGORIES (packages/engine/src/actuals.ts): each maps to a
+/// stored quote total, so every variance is a direct subtraction. Additive only.
+enum CostCategory {
+  GOODS
+  ASSISTS
+  FREIGHT_TO_BORDER
+  FREIGHT_POST_BORDER
+  ORIGIN_FEES
+  DESTINATION_FEES
+  CLEARANCE
+  INSURANCE
+  DUTY
+  IMPORT_VAT
+  DEFERMENT_FEE
+  UNPLANNED
+  OTHER
+
+  @@map("cost_category")
+}
+
+enum UnplannedReason {
+  DEMURRAGE
+  DETENTION
+  STORAGE
+  CUSTOMS_EXAMINATION
+  OTHER
+
+  @@map("unplanned_reason")
+}
+
+model Bill {
+  id              String     @id @default(uuid()) @db.Uuid
+  organizationId  String     @map("organization_id") @db.Uuid
+  vendorType      VendorType @map("vendor_type")
+  supplierId      String?    @map("supplier_id") @db.Uuid // required when vendorType = SUPPLIER (CHECK in 0013)
+  vendorName      String?    @map("vendor_name") // required for every other vendor type (CHECK in 0013)
+  billType        BillType   @map("bill_type")
+  referenceNumber String     @map("reference_number") // the vendor's invoice / credit note / statement number; unique per vendor (partial indexes in 0013)
+  isCreditNote    Boolean    @default(false) @map("is_credit_note") // a negative document: its lines reduce the actuals
+  status          BillStatus @default(DRAFT)
+  currency        String // ISO 4217; lines and payments are in this currency
+  totalAmount     Decimal    @map("total_amount") @db.Decimal(14, 2) // must equal the sum of the lines when posted (trigger)
+  issuedOn        DateTime   @map("issued_on") @db.Date
+  dueOn           DateTime?  @map("due_on") @db.Date
+  documentId      String?    @map("document_id") @db.Uuid // the invoice in the vault (M5); attachable after posting
+  notes           String?
+  postedAt        DateTime?  @map("posted_at")
+  paidAt          DateTime?  @map("paid_at") // set when payments cover the total
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  supplier     Supplier?     @relation(fields: [supplierId, organizationId], references: [id, organizationId])
+  document     Document?     @relation(fields: [documentId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  lines        BillLine[]
+  payments     BillPayment[]
+
+  @@unique([id, organizationId]) // target of the composite FKs from bill_lines and bill_payments
+  @@index([organizationId, status])
+  @@index([organizationId, supplierId])
+  @@map("bills")
+}
+
+model BillLine {
+  id                  String           @id @default(uuid()) @db.Uuid
+  organizationId      String           @map("organization_id") @db.Uuid
+  billId              String           @map("bill_id") @db.Uuid
+  position            Int // display order, 0-based
+  costCategory        CostCategory     @map("cost_category")
+  unplannedReason     UnplannedReason? @map("unplanned_reason") // only with costCategory = UNPLANNED (CHECK)
+  description         String
+  amount              Decimal          @db.Decimal(14, 2) // bill currency; may be negative for a discount line, the bill total may not
+  // The costing link (ADR-0014): every line belongs to one purchase order, optionally to one of
+  // its items (a SKU). Shared lines are apportioned by the engine at read time.
+  purchaseOrderId     String           @map("purchase_order_id") @db.Uuid
+  purchaseOrderItemId String?          @map("purchase_order_item_id") @db.Uuid
+
+  organization      Organization       @relation(fields: [organizationId], references: [id])
+  bill              Bill               @relation(fields: [billId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId, organizationId], references: [id, organizationId])
+  // Three-column FK: the item must belong to the line's purchase order and tenant.
+  purchaseOrderItem PurchaseOrderItem? @relation(fields: [purchaseOrderItemId, purchaseOrderId, organizationId], references: [id, purchaseOrderId, organizationId])
+
+  @@index([organizationId, purchaseOrderId])
+  @@index([billId])
+  @@map("bill_lines")
+}
+
+model BillPayment {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  billId         String   @map("bill_id") @db.Uuid
+  paidOn         DateTime @map("paid_on") @db.Date
+  amount         Decimal  @db.Decimal(14, 2) // bill currency
+  fxRate         Decimal  @map("fx_rate") @db.Decimal(14, 6) // GBP per 1 unit of the bill currency, as actually paid; 1 for GBP
+  amountGbp      Decimal  @map("amount_gbp") @db.Decimal(14, 2) // round2(amount × fxRate), what the bank took
+  reference      String? // bank / partner reference, free text
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  bill         Bill         @relation(fields: [billId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([billId])
+  @@map("bill_payments")
 }
 
 // ---------- Execution (Phase 2) ----------
@@ -964,7 +1116,9 @@ model Document {
   quote        Quote?       @relation(fields: [quoteId, organizationId], references: [id, organizationId], onDelete: Restrict)
   uploadedBy   User         @relation("uploadedDocuments", fields: [uploadedById], references: [id]) // (NEW vs brief) who uploaded (audit / UI)
   verifiedBy   User?        @relation("verifiedDocuments", fields: [verifiedById], references: [id]) // (NEW vs brief) who verified
+  bills        Bill[] // M8 (ADR-0014): inverse of Bill.documentId (the invoice in the vault)
 
+  @@unique([id, organizationId]) // M8: target of the composite FK from bills
   @@index([organizationId])
   @@index([shipmentId]) // (NEW vs brief) booking preconditions look up docs by shipment (§6.1)
   @@index([organizationId, quoteId]) // (NEW vs brief, M5) vault "by quote" and missing-files list

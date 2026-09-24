@@ -31,6 +31,12 @@ export const ACTIONS = [
   'order.view',
   'order.edit',
   'order.issue',
+  // M8 (ADR-0014): bills (the AP sub-ledger). Viewing mirrors order.view, keying in drafts and
+  // recording payments mirrors order.edit, posting (which makes a bill a financial record and
+  // freezes it) mirrors order.issue.
+  'bill.view',
+  'bill.edit',
+  'bill.post',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -59,6 +65,10 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   'order.view': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: true },
   'order.edit': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false },
   'order.issue': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  // M8
+  'bill.view': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: true },
+  'bill.edit': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false },
+  'bill.post': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
 };
 
 export class ForbiddenError extends Error {

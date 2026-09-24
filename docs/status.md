@@ -23,10 +23,9 @@
 
 ## In progress
 
-| Milestone                       | State                                                                                                              |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| M5 document vault               | Built and verified in its branch; merge resolved, final checks running before push                                 |
-| M2 settings and customs profile | Built and verified in its branch (encryption, wizard, company lookup, members, invitations, audit log); merge next |
+| Milestone                    | State                                                                                                                                                                                                                                                            |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M8 actual costs and variance | Built: migration 0013, bills ledger (drafts, posting, frozen, payments with FX), "Costs and variance" per order through the engine's `absorbActuals`; DB test as superuser and `harbour_app`; gate green; walkthrough on the built server. Left: see the handoff |
 
 ## Not started
 
@@ -63,17 +62,19 @@ See `docs/decisions-needed.md` (rows (a)–(ad) plus milestone additions). The o
 launch: real rate sheet figures (d), customs practitioner review of the fixtures (4), email
 provider (s), hosting (k), storage and scanning providers (x, y).
 
-## Handoff: M7 purchase orders (work in progress)
+## Handoff: M8 actual costs and variance (built, slice 1)
 
-_Last updated: M7 code landed as WIP; tests and verification outstanding._
+_Last updated: M7 complete and verified; M8 built and tested, a few pieces left._
 
-**Done (on `claude/new-session-ar961c`, unverified against a database):** migration `0012_purchase_orders` (tables, `po_counters`, triggers, RLS, one-accepted-quote-per-PO index) with its migration test; RBAC `order.view/edit/issue`; services `apps/web/app/services/orders/{orders,editor,freight-quote}.server.ts` and pure `schedule.ts`; validators `validators/order.ts`; components `components/orders/*`; routes `/app/orders`, `/app/orders/new`, `/app/orders/:id`, `/app/orders/:id/edit`; quote builder `?po=<id>` pre-fill and `Quote.purchaseOrderId` on save; Home "Payments due" card; Orders nav entry. Unit tests for `schedule.ts` and `validators/order.ts` pass; prettier and typecheck pass.
+**Done (on `claude/new-session-ar961c`):** migration `0013_bills` (enums `vendor_type`, `bill_type`, `bill_status`, `cost_category`, `unplanned_reason`; tables `bills`, `bill_lines`, `bill_payments` with composite FKs, CHECKs, reference-per-vendor partial indexes, triggers `bills_guard` / `bill_lines_frozen` / `bill_payments_guard`, RLS, grants) with its migration test; tenancy allow-list and Prisma exports; RBAC `bill.view/edit/post`; validators `validators/bill.ts`; services `services/bills/{bills,editor,variance}.server.ts` and pure `actuals.ts` / `totals.ts`; components `components/bills/*`; routes `/app/bills`, `/app/bills/new`, `/app/bills/:id`, `/app/bills/:id/edit`, `/app/orders/:id/costs`; "Costs and variance" and "Record a bill" links on the purchase order page; Bills nav entry. Tests: `validators/bill.test.ts`, `services/bills/actuals.test.ts`, `routes/bills.db.test.ts` (both database roles). Docs: web README "Bills and variance (M8)", db README 0013, decisions-needed (ah).
 
-**Still to do for M7:**
+**Still to do for M8:**
 
-1. DB-backed test `apps/web/app/routes/orders.db.test.ts` (mirror `quotes.db.test.ts`): numbering `PO-YYYY-001/002` per org and year incl. two parallel creates; create/update totals; issue freezes totals and computes deposit/balance for PREPAID, NET and DEPOSIT_BALANCE; trigger refuses editing an issued PO's lines/totals but allows status, payment dates and notes; illegal transition refused; second ACCEPTED quote refused (`PO_QUOTE_ACCEPTED`); `?po=` pre-fills the builder (quantity, PO unit cost) and the saved quote carries `purchaseOrderId`; cross-tenant negatives; RBAC (VIEWER cannot edit, MEMBER cannot issue); no PII in logs.
-2. Run the full gate from the repo root with a Postgres cluster (migrate deploy 0001–0012; suite as superuser and as `harbour_app`): `pnpm exec prettier --check .`, `pnpm run typecheck`, `pnpm run lint`, `pnpm run test`, web and worker builds. Fix whatever fails.
-3. Curl walkthrough of the built server: supplier with DEPOSIT_BALANCE 30% terms → product → PO of 500 units → issue → deposit due → record deposit paid → Get freight quote → save draft → PO detail lists the quote → Home shows the balance due.
-4. Docs: `apps/web/README.md` "Orders (M7)" section, `packages/db/README.md` 0012 note, `docs/phase-1-build-plan.md` M7 → Done, move M7 to Completed above, `docs/decisions-needed.md` row (ag) "PO numbering per year vs global; deposit due date rule".
+1. Attach the invoice from the vault to a bill (`Bill.documentId` and the composite FK exist; add a picker on the bill page using M5's `loadVault`, and a "record a bill from this document" link on the vault).
+2. Home: an "Actuals" card (orders with posted bills, biggest variance, categories still missing) next to "Payments due".
+3. ADR-0014 consequences: the "split an HMRC statement across orders" helper (pre-fill lines from the orders' customs values) and, later, the Xero/QuickBooks export of posted bills.
+4. Decide decisions-needed (ah) (rate for the unpaid part of a foreign-currency bill; reference uniqueness) and adjust `billsToActuals` if the answer differs.
 
-**Then M8** (bills / AP ledger UI and variance screens using `absorbActuals`, ADR-0014), followed by the housekeeping items listed in the plan (drop `Supplier.countryCode`, tighten the flaky M2 settings tests, tracking retention purge, worker DB role split).
+**Then** the housekeeping items listed in the plan (drop `Supplier.countryCode`, tighten the flaky M2 settings tests, tracking retention purge, worker DB role split).
+
+**Note on the test database:** running the suite as `harbour_app` leaves tracking and ledger organisations behind (the app role cannot delete append-only or frozen rows), and a later superuser run of `packages/db/test/tracking.db.test.ts` then fails on the leftovers. Use a fresh database per role, as CI does.
