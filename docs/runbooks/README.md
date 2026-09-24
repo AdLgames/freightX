@@ -12,6 +12,7 @@ shown as `<placeholder>` and must be filled in when the environment exists.
 | [tariff-or-fx-job-failed.md](tariff-or-fx-job-failed.md) | HMRC/ECB/tariff job alert, FX missing by the 2nd          |
 | [circuit-breaker-open.md](circuit-breaker-open.md)       | SeaRates/tariff/FX breaker open for more than 10 minutes  |
 | [restore-drill.md](restore-drill.md)                     | Quarterly (scheduled), and after any backup config change |
+| [production-env.md](production-env.md)                   | Standing up or changing a production environment; launch  |
 
 ## On-call expectations (brief §7.8)
 
