@@ -34,6 +34,11 @@ export interface Stores {
   backend: 'memory' | 'postgres';
   tariffCache: TariffCacheStore;
   fxStore: FxRateStore;
+  /**
+   * Where the FX refresh writes real rates: the Postgres store itself when there is a database
+   * (even when `fxStore` keeps the sample seed in-process), otherwise the same in-memory store.
+   */
+  fxRefreshStore: FxRateStore;
   signups: EmailSignupRepository;
 }
 
@@ -60,6 +65,10 @@ const withProcessLocalSampleSeed = (db: FxRateStore): FxRateStore => {
   return {
     find: async (source, currency, at) =>
       (await db.find(source, currency, at)) ?? sample.find(source, currency, at),
+    history: async (source, currency, from, to) => {
+      const rows = await db.history(source, currency, from, to);
+      return rows.length > 0 ? rows : sample.history(source, currency, from, to);
+    },
     upsert: (records) => sample.upsert(records),
   };
 };
@@ -80,6 +89,7 @@ export const createStores = (env: Env, logger: Logger): Stores => {
           logger.warn('tariff_cache.corrupt_row', { hsCode, issues }),
       }),
       fxStore: env.FX_SEED_CSV ? fxStore : withProcessLocalSampleSeed(fxStore),
+      fxRefreshStore: fxStore,
       signups: new PrismaEmailSignupRepository(prisma),
     };
   }
@@ -88,10 +98,12 @@ export const createStores = (env: Env, logger: Logger): Stores => {
     message:
       'DATABASE_URL unset: using in-memory tariff cache, FX store and signup list (lost on restart).',
   });
+  const fxStore = new InMemoryFxStore();
   return {
     backend: 'memory',
     tariffCache: new InMemoryTariffCache(),
-    fxStore: new InMemoryFxStore(),
+    fxStore,
+    fxRefreshStore: fxStore,
     signups: new InMemoryEmailSignupRepository(),
   };
 };

@@ -46,6 +46,8 @@ export interface TrackingServices {
   queue: TrackingQueue;
   mapStyleUrl: string;
   mapCsp: CspAdditions;
+  /** `DEMO_FLEET=on`: the Home map offers a simulated fleet and advances it on every map load. */
+  demoFleetEnabled: boolean;
   /** Webhook provider for `/webhooks/tracking/:providerId`, or null for an unknown id. */
   webhookProvider(providerId: string): MilestoneProvider | null;
   webhookSecret(providerId: string): string | undefined;
@@ -146,6 +148,7 @@ export const createTrackingServices = (deps: TrackingDeps): TrackingServices => 
     webhookSecret: env.TERMINAL49_WEBHOOK_SECRET !== undefined,
     queue: queue.backend,
     mapStyleUrl: env.MAP_STYLE_URL,
+    demoFleet: env.DEMO_FLEET,
   });
 
   return {
@@ -156,6 +159,7 @@ export const createTrackingServices = (deps: TrackingDeps): TrackingServices => 
     queue,
     mapStyleUrl: env.MAP_STYLE_URL,
     mapCsp: mapCspAdditions(env.MAP_STYLE_URL, env.MAP_TILE_ORIGINS ?? []),
+    demoFleetEnabled: env.DEMO_FLEET === 'on',
     webhookProvider: (providerId) => milestoneProviderForWebhook(providerId, env, { now }),
     webhookSecret: (providerId) =>
       providerId === 'terminal49' ? env.TERMINAL49_WEBHOOK_SECRET : undefined,

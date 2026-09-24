@@ -1611,7 +1611,8 @@ fieldset.readonly .form-actions {
   color: var(--slate-400);
 }
 
-.map-empty h2 {
+.map-empty h2,
+.map-empty h3 {
   color: #fff;
   font-size: 1.1rem;
   margin: 0.5rem 0 0.25rem;
@@ -1619,6 +1620,109 @@ fieldset.readonly .form-actions {
 
 .map-empty p {
   margin: 0;
+}
+
+.map-empty-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.map-empty-actions form {
+  margin: 0;
+}
+
+/* Home map: the M9 tracking map inside the dark panel (design-system.md, "Map panel"). */
+.map-panel-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.map-panel-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--cyan-400);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.map-panel-link:hover {
+  text-decoration: underline;
+}
+
+.map-panel-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-top: 0.75rem;
+  min-height: 22rem;
+}
+
+.map-panel .tracking-map-wrap {
+  margin: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-panel .tracking-map {
+  flex: 1;
+  height: auto;
+  min-height: 20rem;
+  border-color: var(--navy-800);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.map-panel .tracking-map.placeholder {
+  background: rgb(30 41 59 / 0.5);
+  color: var(--slate-400);
+}
+
+.map-panel .tracking-map-legend {
+  color: var(--slate-400);
+  font-size: 0.8rem;
+}
+
+.map-panel .tracking-map-legend strong {
+  color: #fff;
+}
+
+.map-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.25rem 0 0;
+}
+
+.map-panel-actions .muted {
+  color: var(--slate-400);
+}
+
+.dot-simulated {
+  background: var(--amber);
+  box-shadow: 0 0 0 4px rgb(180 95 6 / 0.25);
+}
+
+.button.ghost-dark {
+  background: transparent;
+  color: #e2e8f0;
+  border: 1px solid var(--navy-700);
+}
+
+.button.ghost-dark:hover {
+  background: rgb(30 41 59 / 0.7);
+  color: #fff;
 }
 
 .drafts {
@@ -2220,6 +2324,63 @@ fieldset.readonly .form-actions {
 }
 .payments-due .draft-row {
   padding: 10px 0;
+}
+
+/* Home: the right-hand column under "Recent drafts" stacks the treasury and payments cards. */
+.home-stack {
+  display: grid;
+  gap: 1.5rem;
+  align-content: start;
+}
+
+/* Home treasury widget (live GBP rates with a 7-day trend). */
+.treasury h2 {
+  margin-top: 0;
+}
+.treasury-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.treasury-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 10px 0;
+}
+.treasury-list li + li {
+  border-top: 1px solid var(--slate-100);
+}
+.treasury-pair {
+  font-weight: 700;
+}
+.treasury-rate {
+  font-size: 1.35rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.treasury-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--slate-500);
+}
+.treasury-trend .icon {
+  width: 1rem;
+  height: 1rem;
+}
+.treasury-trend.stronger {
+  color: var(--emerald-600);
+}
+.treasury-trend.weaker {
+  color: var(--red-600);
+}
+.treasury-foot {
+  margin: 8px 0 0;
 }
 
 /* ---------- M8: bills, costs and variance ---------- */

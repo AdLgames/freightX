@@ -1,9 +1,10 @@
 import {
-  ECB_DAILY_URL,
+  ECB_HISTORY_90D_URL,
   HttpError,
+  ecbRecordsToLoad,
   hmrcMonthlyCsvUrl,
   isRetryableHttpError,
-  parseEcbDailyXml,
+  parseEcbHistoryXml,
   parseHmrcMonthlyCsv,
   withRetry,
   withTimeout,
@@ -24,7 +25,9 @@ import type { AlertCode, AlertLevel, AlertSink } from '../ports.js';
  *     a 404 before publication is EXPECTED and is not an alert);
  *   - on the 2nd or later, if the current month's HMRC rates are still absent → critical
  *     `FX_HMRC_MISSING` (runbook: docs/runbooks/tariff-or-fx-job-failed.md §2);
- *   - then refresh ECB daily as fallback data (validity 7 days, set by the parser).
+ *   - then refresh ECB reference rates as fallback data from the 90-day history file (validity
+ *     7 days per day, set by the parser): days the store lacks plus the two newest, so the Home
+ *     treasury widget has a trend and revisions land, without rewriting the whole window daily.
  *
  * Provider errors never throw: they are reported through `alerts` and the summary, and the next
  * scheduled run tries again. Store (database) errors DO throw so BullMQ retries with backoff.
@@ -217,30 +220,33 @@ export const runFxRefresh = async (deps: FxRefreshDeps): Promise<FxRefreshSummar
     }
   }
 
-  // --- ECB daily (fallback data) ------------------------------------------------------------
+  // --- ECB reference rates, 90-day history (fallback data + treasury trend) -----------------
   try {
-    const xml = await fetchText(ECB_DAILY_URL);
-    let parsed: ReturnType<typeof parseEcbDailyXml>;
+    const xml = await fetchText(ECB_HISTORY_90D_URL);
+    let parsed: ReturnType<typeof parseEcbHistoryXml>;
     try {
-      parsed = parseEcbDailyXml(xml);
+      parsed = parseEcbHistoryXml(xml);
     } catch (err) {
       summary.errors.push(`ECB: ${describeError(err)}`);
-      await raise('warning', 'FX_ECB_PARSE_FAILED', 'ECB daily FX XML did not parse', {
-        url: ECB_DAILY_URL,
+      await raise('warning', 'FX_ECB_PARSE_FAILED', 'ECB FX history XML did not parse', {
+        url: ECB_HISTORY_90D_URL,
         error: describeError(err),
       });
       return summary;
     }
-    await deps.store.upsert(parsed.records);
-    summary.ecbRecords = parsed.records.length;
+    const first = parsed.days[0]?.date ?? now.toISOString().slice(0, 10);
+    const existing = await deps.store.history('ECB', 'USD', new Date(`${first}T00:00:00Z`), now);
+    const records = ecbRecordsToLoad(parsed, new Set(existing.map((r) => r.validFrom)));
+    await deps.store.upsert(records);
+    summary.ecbRecords = records.length;
   } catch (err) {
     summary.errors.push(`ECB: ${describeError(err)}`);
     await raise(
       'warning',
       'FX_ECB_FETCH_FAILED',
-      'ECB daily FX fetch failed (fallback rates not refreshed)',
+      'ECB FX history fetch failed (fallback rates not refreshed)',
       {
-        url: ECB_DAILY_URL,
+        url: ECB_HISTORY_90D_URL,
         error: describeError(err),
       },
     );

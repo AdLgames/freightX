@@ -1,4 +1,4 @@
-import { ECB_DAILY_URL, InMemoryFxStore, hmrcMonthlyCsvUrl } from '@harbour/adapters';
+import { ECB_HISTORY_90D_URL, InMemoryFxStore, hmrcMonthlyCsvUrl } from '@harbour/adapters';
 import { describe, expect, it } from 'vitest';
 import { formatYearMonth, nextYearMonth, runFxRefresh } from '../src/jobs/fx-refresh.js';
 import { CollectingAlertSink } from '../src/ports.js';
@@ -23,7 +23,7 @@ describe('runFxRefresh — happy path', () => {
     const { run, store, alerts, calls } = setup(
       {
         [HMRC_SEP]: { status: 200, body: hmrcCsv },
-        [ECB_DAILY_URL]: { status: 200, body: ecbXml },
+        [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml },
       },
       '2026-09-10T06:00:00Z',
     );
@@ -36,7 +36,7 @@ describe('runFxRefresh — happy path', () => {
       errors: [],
     });
     expect(alerts.alerts).toEqual([]);
-    expect(calls).toEqual([HMRC_SEP, ECB_DAILY_URL]);
+    expect(calls).toEqual([HMRC_SEP, ECB_HISTORY_90D_URL]);
     const at = new Date('2026-09-15T00:00:00Z');
     expect(await store.find('HMRC_MONTHLY', 'USD', at)).toMatchObject({ rateToGbp: '0.780031' });
     expect(await store.find('ECB', 'USD', new Date('2026-09-23T00:00:00Z'))).toMatchObject({
@@ -48,7 +48,7 @@ describe('runFxRefresh — happy path', () => {
     const { run, store } = setup(
       {
         [HMRC_SEP]: { status: 200, body: hmrcCsv },
-        [ECB_DAILY_URL]: { status: 200, body: ecbXml },
+        [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml },
       },
       '2026-09-10T06:00:00Z',
     );
@@ -64,7 +64,7 @@ describe('runFxRefresh — next month publication window', () => {
     const { run, calls, alerts } = setup(
       {
         [HMRC_SEP]: { status: 200, body: hmrcCsv },
-        [ECB_DAILY_URL]: { status: 200, body: ecbXml },
+        [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml },
       },
       '2026-09-24T06:00:00Z',
     );
@@ -77,7 +77,7 @@ describe('runFxRefresh — next month publication window', () => {
     const { run, calls, alerts } = setup(
       {
         [HMRC_SEP]: { status: 200, body: hmrcCsv },
-        [ECB_DAILY_URL]: { status: 200, body: ecbXml },
+        [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml },
       },
       '2026-09-25T07:00:00Z',
     );
@@ -96,7 +96,7 @@ describe('runFxRefresh — next month publication window', () => {
         {
           [HMRC_SEP]: { status: 200, body: hmrcCsv },
           [HMRC_OCT]: { status: 200, body: octCsv },
-          [ECB_DAILY_URL]: { status: 200, body: ecbXml },
+          [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml },
         },
         '2026-09-26T06:00:00Z',
       );
@@ -115,7 +115,10 @@ describe('runFxRefresh — next month publication window', () => {
 describe('runFxRefresh — HMRC missing by the 2nd (§5.7)', () => {
   it('raises critical FX_HMRC_MISSING on the 2nd when the month is still absent', async () => {
     const { run, alerts, summary } = await (async () => {
-      const s = setup({ [ECB_DAILY_URL]: { status: 200, body: ecbXml } }, '2026-10-02T06:00:00Z');
+      const s = setup(
+        { [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml } },
+        '2026-10-02T06:00:00Z',
+      );
       return { ...s, summary: await s.run() };
     })();
     expect(run).toBeTypeOf('function');
@@ -133,7 +136,7 @@ describe('runFxRefresh — HMRC missing by the 2nd (§5.7)', () => {
 
   it('does not alert on the 1st (publication may still be pending)', async () => {
     const { run, alerts } = setup(
-      { [ECB_DAILY_URL]: { status: 200, body: ecbXml } },
+      { [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml } },
       '2026-10-01T07:00:00Z',
     );
     await run();
@@ -141,7 +144,7 @@ describe('runFxRefresh — HMRC missing by the 2nd (§5.7)', () => {
   });
 
   it("does not alert when the month was loaded on an earlier run and today's fetch fails", async () => {
-    const { fetch } = fakeFetch({ [ECB_DAILY_URL]: { status: 200, body: ecbXml } });
+    const { fetch } = fakeFetch({ [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml } });
     const store = new InMemoryFxStore();
     await store.upsert([
       {
@@ -171,7 +174,7 @@ describe('runFxRefresh — provider failures never throw', () => {
       const s = setup(
         {
           [HMRC_SEP]: { status: 200, body: hmrcCsv },
-          [ECB_DAILY_URL]: { status: 503, body: 'down' },
+          [ECB_HISTORY_90D_URL]: { status: 503, body: 'down' },
         },
         '2026-09-10T06:00:00Z',
       );
@@ -192,7 +195,7 @@ describe('runFxRefresh — provider failures never throw', () => {
       const s = setup(
         {
           [HMRC_SEP]: { status: 500, body: 'boom' },
-          [ECB_DAILY_URL]: { status: 200, body: ecbXml },
+          [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml },
         },
         '2026-09-10T06:00:00Z',
       );
@@ -208,7 +211,7 @@ describe('runFxRefresh — provider failures never throw', () => {
   it('a network error on both providers is reported, not thrown', async () => {
     const { run, alerts, summary } = await (async () => {
       const s = setup(
-        { [HMRC_SEP]: new Error('ECONNRESET'), [ECB_DAILY_URL]: new Error('ECONNRESET') },
+        { [HMRC_SEP]: new Error('ECONNRESET'), [ECB_HISTORY_90D_URL]: new Error('ECONNRESET') },
         '2026-09-10T06:00:00Z',
       );
       return { ...s, summary: await s.run() };
@@ -226,7 +229,7 @@ describe('runFxRefresh — provider failures never throw', () => {
     const { run, alerts } = setup(
       {
         [HMRC_SEP]: { status: 200, body: 'a,b,c\n1,2,3\n' },
-        [ECB_DAILY_URL]: { status: 200, body: ecbXml },
+        [ECB_HISTORY_90D_URL]: { status: 200, body: ecbXml },
       },
       '2026-09-10T06:00:00Z',
     );

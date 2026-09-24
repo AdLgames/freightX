@@ -5,6 +5,7 @@ import { requireOrgContext, withOrg } from '../services/auth.server';
 import { pageError } from '../services/page-error';
 import type { RateLimitPolicy } from '../services/rate-limit.server';
 import { applySecurityHeaders } from '../services/security-headers.server';
+import { advanceDemoFleet } from '../services/tracking/demo-fleet.server';
 import { loadMapState } from '../services/tracking/queries.server';
 import { mapStateQuerySchema } from '../validators/tracking';
 
@@ -40,9 +41,12 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
   });
   if (!query.success) throw pageError(400, 'Bad request', 'shipmentId must be a UUID.');
 
-  const state = await withOrg(ctx, (tx) =>
-    loadMapState(tx, { shipmentId: query.data.shipmentId, now: new Date() }),
-  );
+  const now = new Date();
+  const state = await withOrg(ctx, async (tx) => {
+    // Demo fleet: simulated vessels move on read (no worker needed); a no-op when the flag is off.
+    if (app.tracking.demoFleetEnabled) await advanceDemoFleet(tx, { now, log: app.logger });
+    return loadMapState(tx, { shipmentId: query.data.shipmentId, now });
+  });
   const headers = new Headers(ctx.headers);
   headers.set('content-type', 'application/json; charset=utf-8');
   headers.set('cache-control', 'no-store');

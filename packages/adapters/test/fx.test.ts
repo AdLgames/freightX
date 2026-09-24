@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { InMemoryFxStore, parseEcbDailyXml, parseHmrcMonthlyCsv, resolveFx } from '../src/index.js';
+import {
+  InMemoryFxStore,
+  ecbRecordsToLoad,
+  parseEcbDailyXml,
+  parseEcbHistoryXml,
+  parseHmrcMonthlyCsv,
+  resolveFx,
+} from '../src/index.js';
 
 const fixture = (name: string): string =>
   readFileSync(join(import.meta.dirname, '..', 'fixtures', 'fx', name), 'utf8');
@@ -33,6 +40,59 @@ describe('parseEcbDailyXml', () => {
     expect(eur?.rateToGbp).toBe('0.86');
     expect(usd?.rateToGbp).toBe('0.735043'); // 0.86 / 1.17
     expect(records.some((r) => r.currency === 'GBP')).toBe(false);
+  });
+});
+
+describe('parseEcbHistoryXml', () => {
+  it('parses every dated block oldest first and keeps the daily parser on the first block', () => {
+    const xml = fixture('ecb-history-sample.xml');
+    const h = parseEcbHistoryXml(xml);
+    expect(h.days.map((d) => d.date)).toEqual(['2026-09-15', '2026-09-19', '2026-09-22']);
+    expect(h.records).toHaveLength(9); // EUR, USD, JPY × 3 days
+    const usd15 = h.records.find((r) => r.currency === 'USD' && r.validFrom === '2026-09-15');
+    expect(usd15?.rateToGbp).toBe('0.73913'); // 0.85 / 1.15
+    expect(usd15?.validTo).toBe('2026-09-22');
+    expect(parseEcbDailyXml(xml).date).toBe('2026-09-22');
+  });
+
+  it('loads missing days plus the newest two', () => {
+    const h = parseEcbHistoryXml(fixture('ecb-history-sample.xml'));
+    const all = ecbRecordsToLoad(h, new Set());
+    expect(all).toHaveLength(9);
+    const some = ecbRecordsToLoad(h, new Set(['2026-09-15', '2026-09-19', '2026-09-22']));
+    expect(new Set(some.map((r) => r.validFrom))).toEqual(new Set(['2026-09-19', '2026-09-22']));
+    const one = ecbRecordsToLoad(h, new Set(['2026-09-19', '2026-09-22']), 1);
+    expect(new Set(one.map((r) => r.validFrom))).toEqual(new Set(['2026-09-15', '2026-09-22']));
+  });
+
+  it('throws without a dated block', () => {
+    expect(() => parseEcbHistoryXml('<Cube></Cube>')).toThrow(/no <Cube time/);
+  });
+});
+
+describe('InMemoryFxStore.history', () => {
+  it('returns the window oldest first, by source and currency only', async () => {
+    const store = new InMemoryFxStore();
+    await store.upsert(parseEcbHistoryXml(fixture('ecb-history-sample.xml')).records);
+    await store.upsert([
+      {
+        source: 'HMRC_MONTHLY',
+        currency: 'USD',
+        rateToGbp: '0.7',
+        validFrom: '2026-09-01',
+        validTo: '2026-09-30',
+      },
+    ]);
+    const rows = await store.history(
+      'ECB',
+      'USD',
+      new Date('2026-09-16T12:00:00Z'),
+      new Date('2026-09-22T00:00:00Z'),
+    );
+    expect(rows.map((r) => r.validFrom)).toEqual(['2026-09-19', '2026-09-22']);
+    expect(
+      await store.history('ECB', 'CHF', new Date('2026-01-01'), new Date('2026-12-31')),
+    ).toEqual([]);
   });
 });
 

@@ -210,6 +210,32 @@ export class PrismaFxRateStore implements FxRateStore {
     };
   }
 
+  async history(
+    source: FxRateRecord['source'],
+    currency: string,
+    from: Date,
+    to: Date,
+  ): Promise<FxRateRecord[]> {
+    const rows = await this.prisma.fxRate.findMany({
+      where: {
+        source,
+        currency,
+        validFrom: { gte: startOfUtcDay(from), lte: startOfUtcDay(to) },
+      },
+      orderBy: { validFrom: 'asc' },
+      take: 400,
+    });
+    return rows
+      .filter((row) => FX_SOURCES.has(row.source))
+      .map((row) => ({
+        source: row.source as FxRateRecord['source'],
+        currency: row.currency,
+        rateToGbp: row.rateToGbp.toString(),
+        validFrom: utcIsoDate(row.validFrom),
+        validTo: utcIsoDate(row.validTo),
+      }));
+  }
+
   /** Idempotent on (source, currency, validFrom); all-or-nothing in one transaction. */
   async upsert(records: readonly FxRateRecord[]): Promise<void> {
     if (records.length === 0) return;
