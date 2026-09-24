@@ -3,11 +3,10 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import maplibregl, { type GeoJSONSource } from 'maplibre-gl';
 import { useEffect, useRef, useState } from 'react';
 import {
-  AIS_STREAM_URL,
   AIS_UK_BOUNDS,
-  aisSubscribeMessage,
-  parseAisMessage,
+  decodeAisVessels,
   upsertAisVessel,
+  type AisSnapshotResponse,
   type AisVessel,
 } from '../../lib/ais-client';
 import {
@@ -30,18 +29,18 @@ import type { TrackingMapProps } from './tracking-map';
  * position over ~1.5 s instead of jumping. Nothing here is stored: only real pings carry a
  * `positionSource`, and extrapolated points are display-only.
  *
- * With `ais` (Home, `AISSTREAM_API_KEY`) a second ScatterplotLayer draws live AIS traffic from
- * aisstream.io around the UK as small lime dots: the picture around the organisation's ships,
- * never its ships. The socket reconnects with a backoff and the cache is bounded (lib/ais-client).
+ * With `ais` (Home, `AISSTREAM_API_KEY`) a second ScatterplotLayer draws live AIS traffic around
+ * the UK as small lime dots: the picture around the organisation's ships, never its ships. The
+ * browser polls the server's relay (`/app/api/ais`, which holds the aisstream socket) every few
+ * seconds and keeps a bounded cache (lib/ais-client).
  */
 const REFRESH_MS = 60_000;
 const GLIDE_MS = 1_500;
-const AIS_RECONNECT_MS = 15_000;
-const AIS_COUNT_MS = 2_000;
+const AIS_POLL_MS = 10_000;
 
 const SHIP_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">' +
-  '<path d="M24 3 L34 20 L34 38 Q24 46 14 38 L14 20 Z" fill="#0b5fa5" stroke="#ffffff" stroke-width="2.5"/>' +
+  '<path d="M24 3 L34 20 L34 38 Q24 46 14 38 L14 20 Z" fill="#4da3ff" stroke="#ffffff" stroke-width="2.5"/>' +
   '<circle cx="24" cy="26" r="4" fill="#ffffff"/></svg>';
 const SHIP_ICON_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(SHIP_SVG)}`;
 
@@ -152,7 +151,7 @@ const buildLayers = (live: Map<string, Live>, ais: readonly AisVessel[]) => {
       id: 'actual-route',
       data: rows.filter((r) => r.container.actualPath.length >= 2),
       getPath: (r) => r.container.actualPath.map(toLonLat),
-      getColor: [11, 95, 165, 220],
+      getColor: [77, 163, 255, 230],
       getWidth: 3,
       widthUnits: 'pixels',
       capRounded: true,
@@ -165,8 +164,8 @@ const buildLayers = (live: Map<string, Live>, ais: readonly AisVessel[]) => {
       getRadius: (r) => r.radiusKm * 1000,
       radiusUnits: 'meters',
       radiusMinPixels: 6,
-      getFillColor: (r) => (r.capped ? [120, 120, 120, 50] : [11, 95, 165, 40]),
-      getLineColor: [11, 95, 165, 140],
+      getFillColor: (r) => (r.capped ? [170, 180, 195, 60] : [77, 163, 255, 45]),
+      getLineColor: [77, 163, 255, 160],
       lineWidthMinPixels: 1,
       stroked: true,
     }),
@@ -244,51 +243,53 @@ export function TrackingMapClient({ styleUrl, stateUrl, initialState, ais }: Tra
   const [aisStatus, setAisStatus] = useState<'off' | 'connecting' | 'live' | 'down'>(
     ais ? 'connecting' : 'off',
   );
-  const aisKey = ais?.apiKey ?? null;
+  const [aisError, setAisError] = useState<string | null>(null);
+  const aisUrl = ais?.url ?? null;
 
-  // Live AIS traffic (Home): one socket, reconnecting; the cache is pruned on every report.
+  // Live AIS traffic (Home): poll the relay; the cache is pruned on every merge.
   useEffect(() => {
-    if (!aisKey) return;
-    let socket: WebSocket | null = null;
-    let closed = false;
-    let retry: number | undefined;
-    const connect = () => {
-      if (closed) return;
-      setAisStatus('connecting');
+    if (!aisUrl) return;
+    const cache = aisRef.current;
+    let cancelled = false;
+    let since = 0;
+    const poll = async () => {
       try {
-        socket = new WebSocket(AIS_STREAM_URL);
-      } catch {
-        setAisStatus('down');
-        retry = window.setTimeout(connect, AIS_RECONNECT_MS);
-        return;
-      }
-      socket.onopen = () => {
-        socket?.send(aisSubscribeMessage(aisKey));
-        setAisStatus('live');
-      };
-      socket.onmessage = (ev) => {
-        if (typeof ev.data !== 'string') return;
+        const q = since > 0 ? `?since=${since}` : '';
+        const res = await fetch(`${aisUrl}${q}`, {
+          headers: { accept: 'application/json' },
+          credentials: 'same-origin',
+        });
+        if (cancelled) return;
+        if (!res.ok) {
+          setAisStatus('down');
+          setAisError(null);
+          return;
+        }
+        const body = (await res.json()) as AisSnapshotResponse;
+        if (cancelled) return;
         const now = Date.now();
-        const v = parseAisMessage(ev.data, now);
-        if (v) upsertAisVessel(aisRef.current, v, now);
-      };
-      socket.onerror = () => setAisStatus('down');
-      socket.onclose = () => {
-        if (closed) return;
-        setAisStatus('down');
-        retry = window.setTimeout(connect, AIS_RECONNECT_MS);
-      };
+        for (const v of decodeAisVessels(body.v)) upsertAisVessel(cache, v, now);
+        since = Math.max(since, body.collectedAt);
+        setAisCount(cache.size);
+        if (body.status === 'error') {
+          setAisStatus('down');
+          setAisError(body.error);
+        } else {
+          setAisStatus(body.status === 'warming' && cache.size === 0 ? 'connecting' : 'live');
+          setAisError(null);
+        }
+      } catch {
+        if (!cancelled) setAisStatus('down');
+      }
     };
-    connect();
-    const counter = window.setInterval(() => setAisCount(aisRef.current.size), AIS_COUNT_MS);
+    void poll();
+    const timer = window.setInterval(() => void poll(), AIS_POLL_MS);
     return () => {
-      closed = true;
-      window.clearInterval(counter);
-      if (retry !== undefined) window.clearTimeout(retry);
-      socket?.close();
-      aisRef.current.clear();
+      cancelled = true;
+      window.clearInterval(timer);
+      cache.clear();
     };
-  }, [aisKey]);
+  }, [aisUrl]);
 
   // Periodic refresh (60 s). The server recomputes dead reckoning; the client glides to it.
   useEffect(() => {
@@ -357,21 +358,21 @@ export function TrackingMapClient({ styleUrl, stateUrl, initialState, ais }: Tra
         type: 'line',
         source: 'expected-route',
         paint: {
-          'line-color': '#0b5fa5',
+          'line-color': '#4da3ff',
           'line-width': 2,
           'line-dasharray': [2, 3],
           'line-opacity': 0.8,
         },
         layout: { 'line-cap': 'round' },
       });
-      fitBounds(map, stateRef.current, aisKey !== null);
+      fitBounds(map, stateRef.current, aisUrl !== null);
     });
     raf = window.requestAnimationFrame(frame);
     return () => {
       window.cancelAnimationFrame(raf);
       map.remove();
     };
-  }, [styleUrl, aisKey]);
+  }, [styleUrl, aisUrl]);
 
   const tracked = state.containers.filter((c) => c.ping);
   return (
@@ -399,7 +400,9 @@ export function TrackingMapClient({ styleUrl, stateUrl, initialState, ais }: Tra
               ? `Live AIS traffic · ${aisCount} vessel${aisCount === 1 ? '' : 's'}`
               : aisStatus === 'connecting'
                 ? 'Connecting to live AIS…'
-                : 'Live AIS unavailable, reconnecting…'}
+                : aisError
+                  ? `Live AIS refused: ${aisError}`
+                  : 'Live AIS unavailable, retrying…'}
           </span>
         ) : null}
         {status === 'refresh-failed' ? (

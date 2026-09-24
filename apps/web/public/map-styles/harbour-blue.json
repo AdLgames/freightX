@@ -1,0 +1,241 @@
+{
+  "version": 8,
+  "name": "Harbour Blue",
+  "metadata": {
+    "harbour:notes": "Monochrome blue chart for the Command Center map: navy water, muted land, thin outlines, place names only. Tiles and glyphs from OpenFreeMap (keyless). Served by the app at /map-styles/harbour-blue.json; the origin below joins the CSP (services/tracking/csp.server.ts)."
+  },
+  "sources": {
+    "openmaptiles": {
+      "type": "vector",
+      "url": "https://tiles.openfreemap.org/planet"
+    }
+  },
+  "glyphs": "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#17304f"
+      }
+    },
+    {
+      "id": "park",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "park",
+      "minzoom": 9,
+      "paint": {
+        "fill-color": "#1a3658",
+        "fill-opacity": 0.6
+      }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "water",
+      "filter": ["!=", ["get", "brunnel"], "tunnel"],
+      "paint": {
+        "fill-color": "#0a1b33",
+        "fill-outline-color": "#2f5a8c",
+        "fill-antialias": true
+      }
+    },
+    {
+      "id": "waterway",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "waterway",
+      "minzoom": 8,
+      "filter": ["!=", ["get", "brunnel"], "tunnel"],
+      "paint": {
+        "line-color": "#102544",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.6, 14, 2]
+      }
+    },
+    {
+      "id": "road-major",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 9,
+      "filter": [
+        "all",
+        ["match", ["get", "class"], ["motorway", "trunk"], true, false],
+        ["!=", ["get", "brunnel"], "tunnel"]
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#234a78",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.6, 14, 2.2],
+        "line-opacity": 0.7
+      }
+    },
+    {
+      "id": "boundary-region",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 5,
+      "filter": [
+        "all",
+        [">=", ["get", "admin_level"], 3],
+        ["<=", ["get", "admin_level"], 4],
+        ["!=", ["get", "maritime"], 1],
+        ["!=", ["get", "disputed"], 1],
+        ["!", ["has", "claimed_by"]]
+      ],
+      "paint": {
+        "line-color": "#2b4a75",
+        "line-width": 0.6,
+        "line-dasharray": [3, 2],
+        "line-opacity": 0.8
+      }
+    },
+    {
+      "id": "boundary-country",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "filter": [
+        "all",
+        ["==", ["get", "admin_level"], 2],
+        ["!=", ["get", "maritime"], 1],
+        ["!=", ["get", "disputed"], 1],
+        ["!", ["has", "claimed_by"]]
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#3f6799",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 2, 0.5, 8, 1.2]
+      }
+    },
+    {
+      "id": "boundary-disputed",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "filter": ["all", ["!=", ["get", "maritime"], 1], ["==", ["get", "disputed"], 1]],
+      "paint": {
+        "line-color": "#3f6799",
+        "line-width": 0.8,
+        "line-dasharray": [2, 2]
+      }
+    },
+    {
+      "id": "water-name",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "water_name",
+      "minzoom": 3,
+      "filter": ["match", ["get", "class"], ["sea", "ocean", "bay"], true, false],
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]],
+        "text-font": ["Noto Sans Italic"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 3, 10, 8, 14],
+        "text-letter-spacing": 0.15,
+        "text-max-width": 6,
+        "symbol-placement": "point"
+      },
+      "paint": {
+        "text-color": "#5b8bc4",
+        "text-halo-color": "#0a1b33",
+        "text-halo-width": 1
+      }
+    },
+    {
+      "id": "place-town",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 8,
+      "filter": ["==", ["get", "class"], "town"],
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 11,
+        "text-max-width": 8,
+        "text-padding": 6
+      },
+      "paint": {
+        "text-color": "#a9c4e4",
+        "text-halo-color": "#0a1b33",
+        "text-halo-width": 1.2,
+        "text-halo-blur": 0.4
+      }
+    },
+    {
+      "id": "place-city",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 5,
+      "filter": ["all", ["==", ["get", "class"], "city"], ["!=", ["get", "capital"], 2]],
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 5, 11, 10, 15],
+        "text-max-width": 8,
+        "text-padding": 6
+      },
+      "paint": {
+        "text-color": "#a9c4e4",
+        "text-halo-color": "#0a1b33",
+        "text-halo-width": 1.2,
+        "text-halo-blur": 0.4
+      }
+    },
+    {
+      "id": "place-capital",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 4,
+      "filter": ["all", ["==", ["get", "class"], "city"], ["==", ["get", "capital"], 2]],
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]],
+        "text-font": ["Noto Sans Bold"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 4, 12, 10, 17],
+        "text-max-width": 8,
+        "text-padding": 6
+      },
+      "paint": {
+        "text-color": "#c6dbf3",
+        "text-halo-color": "#0a1b33",
+        "text-halo-width": 1.2,
+        "text-halo-blur": 0.4
+      }
+    },
+    {
+      "id": "place-country",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 1,
+      "filter": ["==", ["get", "class"], "country"],
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 1, 10, 6, 15],
+        "text-max-width": 8,
+        "text-padding": 6,
+        "text-transform": "uppercase",
+        "text-letter-spacing": 0.12
+      },
+      "paint": {
+        "text-color": "#7fa6d4",
+        "text-halo-color": "#0a1b33",
+        "text-halo-width": 1.2,
+        "text-halo-blur": 0.4
+      },
+      "maxzoom": 9
+    }
+  ]
+}

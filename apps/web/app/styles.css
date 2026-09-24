@@ -2044,7 +2044,7 @@ fieldset.readonly .form-actions {
   width: 100%;
   height: 420px;
   border: 1px solid var(--line);
-  background: var(--panel);
+  background: #0a1b33; /* the Harbour Blue style's water, shown until the tiles arrive */
   position: relative;
 }
 
@@ -2065,7 +2065,7 @@ fieldset.readonly .form-actions {
 .legend-line {
   display: inline-block;
   width: 28px;
-  border-top: 3px solid #0b5fa5;
+  border-top: 3px solid #4da3ff;
   vertical-align: middle;
   margin-right: 6px;
 }
@@ -2080,8 +2080,8 @@ fieldset.readonly .form-actions {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: rgba(11, 95, 165, 0.16);
-  border: 1px solid rgba(11, 95, 165, 0.55);
+  background: rgba(77, 163, 255, 0.18);
+  border: 1px solid rgba(77, 163, 255, 0.6);
   vertical-align: middle;
   margin-right: 6px;
 }

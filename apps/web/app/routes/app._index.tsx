@@ -84,7 +84,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
   const app = await getApp();
   const now = new Date();
   const demoFleetEnabled = app.tracking.demoFleetEnabled;
-  const aisKey = app.tracking.aisStreamKey;
+  const aisEnabled = app.tracking.ais !== null;
   const result = await withOrg(ctx, async (tx) => {
     const org = await tx.organization.findUnique({
       where: { id: ctx.org.id },
@@ -194,7 +194,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
       ...result,
       treasury,
       mapStyleUrl: app.tracking.mapStyleUrl,
-      ais: aisKey ? { apiKey: aisKey } : null,
+      ais: aisEnabled ? { url: '/app/api/ais' } : null,
       tracking: {
         canTrack: can(ctx.role, 'shipment.track'),
         positionsConfigured: app.tracking.positionProviderConfigured,

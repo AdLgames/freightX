@@ -6,7 +6,7 @@ import {
   parseCspAdditions,
   serializeCspAdditions,
 } from './security-headers.server';
-import { mapCspAdditions, withAisOrigin } from './tracking/csp.server';
+import { mapCspAdditions } from './tracking/csp.server';
 
 /** M9 — route-scoped CSP additions (ADR-0017). The global policy must stay byte-identical. */
 describe('contentSecurityPolicy', () => {
@@ -75,19 +75,16 @@ describe('contentSecurityPolicy', () => {
   });
 });
 
-describe('withAisOrigin', () => {
-  it('adds the aisstream socket to connect-src only when a key is configured', () => {
-    const base = mapCspAdditions('https://tiles.openfreemap.org/styles/liberty');
-    expect(withAisOrigin(base, null)).toEqual(base);
-    const withAis = withAisOrigin(base, 'wss://stream.aisstream.io');
-    expect(withAis['connect-src']).toEqual([
+describe('mapCspAdditions for a same-origin style', () => {
+  it('allows the OpenFreeMap tile host for a style the app serves itself', () => {
+    const add = mapCspAdditions('/map-styles/harbour-blue.json', ['https://cdn.example']);
+    expect(add['connect-src']).toEqual(['https://tiles.openfreemap.org', 'https://cdn.example']);
+    expect(add['img-src']).toEqual([
       'https://tiles.openfreemap.org',
-      'wss://stream.aisstream.io',
+      'https://cdn.example',
+      'data:',
+      'blob:',
     ]);
-    const csp = contentSecurityPolicy('n', parseCspAdditions(serializeCspAdditions(withAis)));
-    expect(csp).toContain(
-      "connect-src 'self' https://tiles.openfreemap.org wss://stream.aisstream.io",
-    );
   });
 });
 
@@ -95,15 +92,10 @@ describe('applySecurityHeaders with process-wide additions', () => {
   it('puts the map sources on a response that carries no route additions', () => {
     const headers = applySecurityHeaders(new Headers(), 'n', {
       hsts: false,
-      additions: withAisOrigin(
-        mapCspAdditions('https://tiles.openfreemap.org/styles/liberty'),
-        'wss://stream.aisstream.io',
-      ),
+      additions: mapCspAdditions('https://tiles.openfreemap.org/styles/liberty'),
     });
     const csp = headers.get('Content-Security-Policy') ?? '';
-    expect(csp).toContain(
-      "connect-src 'self' https://tiles.openfreemap.org wss://stream.aisstream.io",
-    );
+    expect(csp).toContain("connect-src 'self' https://tiles.openfreemap.org");
     expect(csp).toContain("img-src 'self' https://tiles.openfreemap.org data: blob:");
     expect(csp).toContain("worker-src 'self' blob:");
     expect(headers.has('x-harbour-csp-additions')).toBe(false);
