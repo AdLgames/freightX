@@ -559,6 +559,10 @@ model Quote {
   financingFee         Decimal        @default(0) @map("financing_fee") @db.Decimal(14, 2) // (NEW vs brief) engine QuoteTotals.financingFee — broker deferment fee
   inlandVatAdjustment  Decimal        @default(0) @map("inland_vat_adjustment") @db.Decimal(14, 2) // (NEW vs brief) engine QuoteTotals.inlandVatAdjustment — VAT-base padding, not landed cost
   paymentMethod        PaymentMethod? @map("payment_method") // (NEW vs brief) routing in force when computed — a snapshot of CustomsProfile.paymentMethod, not a reference
+  // M4 (migration 0011): the builder's inputs as entered (product ids, quantities, flags, decimal
+  // strings) so a DRAFT can be reopened in the builder. Never read for money: every figure comes
+  // from the snapshot columns above. Null for quotes not created by the builder.
+  builderInput         Json?          @map("builder_input")
 
   warnings    Json // array of {code, message} e.g. ADD_APPLIES, HS_UNVERIFIED
   calcVersion String    @map("calc_version") // engine version that produced this quote

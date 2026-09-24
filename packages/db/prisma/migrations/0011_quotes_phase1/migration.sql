@@ -1,0 +1,25 @@
+-- 0011_quotes_phase1 (Phase 1 M4: quote builder, saved quotes)
+--
+-- Generated with
+--   prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma
+--     --shadow-database-url <shadow> --script
+-- and left as generated: one nullable JSONB column on quotes. Numbered 0011 to leave 0009/0010 to
+-- the parallel M9 (tracking) milestone.
+--
+-- `builder_input` holds the builder's inputs as entered (product ids, quantities, incoterm, lane,
+-- flags, decimal strings) so a DRAFT can be reopened in the builder exactly as the user left it.
+-- It is never read for money: every figure on a quote comes from the snapshot columns (§1
+-- "quotes are immutable snapshots"). The accepted-quote trigger (0002) compares whole-row images
+-- minus status/updated_at, so the new column is protected on accepted quotes automatically; adding
+-- it is DDL and does not fire the row triggers (see 0003 for the same reasoning).
+--
+-- ## Rollback
+-- - Reversible: yes (additive)
+-- - Backup snapshot ID: not required
+-- - Down steps: re-deploy the previous release (it ignores the column). To remove it:
+--     ALTER TABLE "quotes" DROP COLUMN "builder_input";
+--   Dropping it only loses the ability to reopen existing drafts in the builder; money is unaffected.
+-- - Data impact: none (nullable, no rewrite).
+
+-- AlterTable
+ALTER TABLE "quotes" ADD COLUMN     "builder_input" JSONB;
