@@ -455,12 +455,15 @@ reckoned position with `app/lib/kinematics-client.ts` (a tested copy of the engi
 the chunk does not pull in the engine), refetches `/app/api/map-state` every 60 s and glides to
 the new position. Tiles: `MAP_STYLE_URL` (default OpenFreeMap Liberty, keyless); MapTiler or a
 Mapbox style work the same way with their key in the URL — read in the loader, never in client
-code — plus `MAP_TILE_ORIGINS` for extra hosts. The route's `headers()` adds `connect-src` and
-`img-src` for those origins, `img-src data: blob:` and `worker-src blob:` through
-`services/security-headers.server.ts` (`x-harbour-csp-additions`, consumed and removed by
-`applySecurityHeaders`); `script-src` cannot be widened and the global policy is unchanged. If a
-browser reports a `style-src` violation from MapLibre, add it in
-`services/tracking/csp.server.ts`, not globally.
+code — plus `MAP_TILE_ORIGINS` for extra hosts. `entry.server.tsx` computes the map's CSP
+additions once from the env (`services/tracking/csp.server.ts`: `connect-src` and `img-src` for
+those origins, `img-src data: blob:`, `worker-src blob:` and, with `AISSTREAM_API_KEY`, the
+aisstream WebSocket origin) and passes them to `applySecurityHeaders` on every response, because
+the map is reached by client-side navigation from any page (the sign-in redirect, for one) and a
+policy set only on the map's route would not cover that document. Routes can still add their own
+sources through `x-harbour-csp-additions` (consumed and removed by `applySecurityHeaders`);
+`script-src` cannot be widened. If a browser reports a `style-src` violation from MapLibre, add
+it in `services/tracking/csp.server.ts`.
 
 **Providers** (`packages/adapters/src/tracking`, decision (ae)): `TRACKING_MILESTONE_PROVIDER`
 `terminal49 | none` (`TERMINAL49_API_KEY`, `TERMINAL49_WEBHOOK_SECRET`) and

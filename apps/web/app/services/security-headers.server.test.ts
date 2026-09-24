@@ -90,3 +90,22 @@ describe('withAisOrigin', () => {
     );
   });
 });
+
+describe('applySecurityHeaders with process-wide additions', () => {
+  it('puts the map sources on a response that carries no route additions', () => {
+    const headers = applySecurityHeaders(new Headers(), 'n', {
+      hsts: false,
+      additions: withAisOrigin(
+        mapCspAdditions('https://tiles.openfreemap.org/styles/liberty'),
+        'wss://stream.aisstream.io',
+      ),
+    });
+    const csp = headers.get('Content-Security-Policy') ?? '';
+    expect(csp).toContain(
+      "connect-src 'self' https://tiles.openfreemap.org wss://stream.aisstream.io",
+    );
+    expect(csp).toContain("img-src 'self' https://tiles.openfreemap.org data: blob:");
+    expect(csp).toContain("worker-src 'self' blob:");
+    expect(headers.has('x-harbour-csp-additions')).toBe(false);
+  });
+});
