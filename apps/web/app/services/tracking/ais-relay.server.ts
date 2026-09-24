@@ -30,6 +30,8 @@ const LOCK_KEY = 'ais:lock';
 
 /** The slice of a WebSocket the collector uses (the DOM/Node global satisfies it). */
 export interface AisSocketLike {
+  /** aisstream sends binary frames; we ask for ArrayBuffer rather than Node's default Blob. */
+  binaryType?: string;
   addEventListener(type: 'open', listener: () => void): void;
   addEventListener(type: 'message', listener: (ev: { data: unknown }) => void): void;
   addEventListener(type: 'error', listener: () => void): void;
@@ -42,7 +44,43 @@ export interface CollectResult {
   vessels: AisVessel[];
   /** The provider's refusal (bad key, bad subscription) or a connection failure. */
   error: string | null;
+  /** aisstream acknowledged the subscription (`SubscriptionConfirmation`), with compression or not. */
+  confirmed: boolean;
+  compression: boolean | null;
 }
+
+const failed = (error: string): CollectResult => ({
+  vessels: [],
+  error,
+  confirmed: false,
+  compression: null,
+});
+
+/**
+ * aisstream frames are binary (UTF-8 JSON inside), text only in tests; Node's WebSocket hands
+ * binary over as ArrayBuffer once `binaryType` is set, or a Blob by default.
+ */
+const frameText = (data: unknown): string | Promise<string> | null => {
+  if (typeof data === 'string') return data;
+  if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+  if (ArrayBuffer.isView(data)) return new TextDecoder().decode(data);
+  if (typeof Blob !== 'undefined' && data instanceof Blob) return data.text();
+  return null;
+};
+
+const parseConfirmation = (raw: string): { compression: boolean | null } | null => {
+  try {
+    const m = JSON.parse(raw) as {
+      MessageType?: unknown;
+      Message?: { CompressionEnabled?: unknown };
+    };
+    if (m?.MessageType !== 'SubscriptionConfirmation') return null;
+    const c = m.Message?.CompressionEnabled;
+    return { compression: typeof c === 'boolean' ? c : null };
+  } catch {
+    return null;
+  }
+};
 
 export interface CollectOptions {
   durationMs?: number;
@@ -57,6 +95,9 @@ export interface CollectOptions {
  */
 export const AIS_REFUSED_MESSAGE =
   'aisstream closed the connection without sending reports (this is how it rejects an invalid API key)';
+/** Accepted subscriptions are acknowledged; silence for the whole window means ours was not. */
+export const AIS_UNCONFIRMED_MESSAGE =
+  'aisstream did not confirm the subscription (late or malformed subscription, or an invalid key)';
 
 /** Opens the stream, subscribes, gathers reports for `durationMs`, closes. Never throws. */
 export const collectAisReports = (
@@ -68,6 +109,8 @@ export const collectAisReports = (
     const durationMs = opts.durationMs ?? AIS_COLLECT_MS;
     const vessels = new Map<string, AisVessel>();
     let error: string | null = null;
+    let confirmed = false;
+    let compression: boolean | null = null;
     let done = false;
     let socket: AisSocketLike | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -80,19 +123,17 @@ export const collectAisReports = (
       } catch {
         // already closed
       }
-      resolve({ vessels: [...vessels.values()], error: error ?? fallback });
+      resolve({ vessels: [...vessels.values()], error: error ?? fallback, confirmed, compression });
     };
     if (!opts.connect && typeof WebSocket === 'undefined') {
-      resolve({
-        vessels: [],
-        error: 'this server runtime has no WebSocket client (Node 22+ needed)',
-      });
+      resolve(failed('this server runtime has no WebSocket client (Node 22+ needed)'));
       return;
     }
     try {
       socket = opts.connect ? opts.connect() : new WebSocket(AIS_STREAM_URL);
+      socket.binaryType = 'arraybuffer';
     } catch (err) {
-      resolve({ vessels: [], error: `could not open the AIS stream: ${errorText(err)}` });
+      resolve(failed(`could not open the AIS stream: ${errorText(err)}`));
       return;
     }
     let subscribed = false;
@@ -105,19 +146,33 @@ export const collectAisReports = (
       socket?.send(aisSubscribeMessage(apiKey));
       subscribed = true;
       if (timer !== undefined) clearTimeout(timer);
-      timer = setTimeout(() => finish(null), durationMs);
+      timer = setTimeout(
+        () => finish(vessels.size === 0 && !confirmed ? AIS_UNCONFIRMED_MESSAGE : null),
+        durationMs,
+      );
     });
-    socket.addEventListener('message', (ev) => {
-      if (typeof ev.data !== 'string') return;
-      const refused = parseAisError(ev.data);
+    const onText = (raw: string) => {
+      if (done) return;
+      const refused = parseAisError(raw);
       if (refused) {
         error = refused;
         finish(refused);
         return;
       }
-      const t = now();
-      const v = parseAisMessage(ev.data, t);
+      const ack = parseConfirmation(raw);
+      if (ack) {
+        confirmed = true;
+        compression = ack.compression;
+        return;
+      }
+      const v = parseAisMessage(raw, now());
       if (v) vessels.set(v.mmsi, v);
+    };
+    socket.addEventListener('message', (ev) => {
+      const text = frameText(ev.data);
+      if (text === null) return;
+      if (typeof text === 'string') onText(text);
+      else void text.then(onText, () => undefined);
     });
     const dropped = () =>
       vessels.size > 0
@@ -252,7 +307,12 @@ export class AisRelay {
         v: encodeAisVessels(merged.values()),
       };
       if (result.error) log.warn('ais.collect_failed', { error: result.error });
-      else log.info('ais.collected', { reports: result.vessels.length, vessels: stored.v.length });
+      else
+        log.info('ais.collected', {
+          reports: result.vessels.length,
+          vessels: stored.v.length,
+          compression: result.compression,
+        });
       await this.write(stored);
       return this.respond(stored, 0);
     } finally {

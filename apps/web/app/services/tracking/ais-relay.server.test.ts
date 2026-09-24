@@ -3,6 +3,7 @@ import { AIS_STALE_MS, type AisVessel } from '../../lib/ais-client';
 import { createLogger } from '../logger.server';
 import {
   AIS_REFUSED_MESSAGE,
+  AIS_UNCONFIRMED_MESSAGE,
   AisRelay,
   MemoryAisCache,
   collectAisReports,
@@ -15,6 +16,7 @@ const log = createLogger({ level: 'error' });
 
 /** A scripted aisstream socket: records what was sent, replays messages on demand. */
 class FakeSocket implements AisSocketLike {
+  binaryType?: string;
   sent: string[] = [];
   closed = false;
   private listeners: Record<string, Array<(ev: { data: unknown }) => void>> = {};
@@ -50,19 +52,40 @@ describe('collectAisReports', () => {
         now: () => 5000,
       });
       socket.emit('open');
+      expect(socket.binaryType).toBe('arraybuffer');
       expect(JSON.parse(socket.sent[0] ?? '{}')).toMatchObject({ APIKey: 'secret-key' });
-      socket.emit('message', report(1));
-      socket.emit('message', report(2));
+      socket.emit(
+        'message',
+        '{"MessageType":"SubscriptionConfirmation","Message":{"CompressionEnabled":true}}',
+      );
+      // aisstream sends binary frames (UTF-8 JSON inside); text frames are accepted too.
+      socket.emit('message', new TextEncoder().encode(report(1)).buffer);
+      socket.emit('message', new TextEncoder().encode(report(2)));
       socket.emit('message', report(1, 51, -2)); // newer report for the same vessel wins
       socket.emit('message', '{"MessageType":"ShipStaticData"}');
       await vi.advanceTimersByTimeAsync(1000);
       const result = await done;
       expect(socket.closed).toBe(true);
       expect(result.error).toBeNull();
+      expect(result.confirmed).toBe(true);
+      expect(result.compression).toBe(true);
       expect(result.vessels.map((v) => [v.mmsi, v.lat])).toEqual([
         ['1', 51],
         ['2', 50.5],
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a subscription that was never confirmed', async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = new FakeSocket();
+      const done = collectAisReports('k', { durationMs: 1000, connect: () => socket });
+      socket.emit('open');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect((await done).error).toBe(AIS_UNCONFIRMED_MESSAGE);
     } finally {
       vi.useRealTimers();
     }
@@ -73,7 +96,7 @@ describe('collectAisReports', () => {
     const p1 = collectAisReports('bad', { durationMs: 60_000, connect: () => refused });
     refused.emit('open');
     refused.emit('message', '{"error":"Api Key Is Not Valid"}');
-    expect(await p1).toEqual({ vessels: [], error: 'Api Key Is Not Valid' });
+    expect(await p1).toMatchObject({ vessels: [], error: 'Api Key Is Not Valid' });
     expect(refused.closed).toBe(true);
 
     const dropped = new FakeSocket();
@@ -112,7 +135,10 @@ describe('AisRelay', () => {
     clock: { t: number },
     cache = new MemoryAisCache(() => clock.t),
   ) => {
-    const collect = vi.fn(async () => results.shift() ?? { vessels: [], error: null });
+    const collect = vi.fn(
+      async () =>
+        results.shift() ?? { vessels: [], error: null, confirmed: true, compression: null },
+    );
     const relay = new AisRelay({
       apiKey: 'k',
       cache,
@@ -128,8 +154,8 @@ describe('AisRelay', () => {
     const clock = { t: 100_000 };
     const { relay, collect } = relayWith(
       [
-        { vessels: [vessel('1', 100_000)], error: null },
-        { vessels: [vessel('2', 120_000)], error: null },
+        { vessels: [vessel('1', 100_000)], error: null, confirmed: true, compression: null },
+        { vessels: [vessel('2', 120_000)], error: null, confirmed: true, compression: null },
       ],
       clock,
     );
@@ -157,7 +183,10 @@ describe('AisRelay', () => {
 
   it('reports the provider refusal as an error status, and warms up behind another collector', async () => {
     const clock = { t: 1_000 };
-    const { relay } = relayWith([{ vessels: [], error: 'Api Key Is Not Valid' }], clock);
+    const { relay } = relayWith(
+      [{ vessels: [], error: 'Api Key Is Not Valid', confirmed: false, compression: null }],
+      clock,
+    );
     expect(await relay.snapshot()).toMatchObject({
       status: 'error',
       error: 'Api Key Is Not Valid',
@@ -167,7 +196,11 @@ describe('AisRelay', () => {
     // Another instance holds the lock and nothing is cached yet: warming, no collection.
     const cache = new MemoryAisCache(() => clock.t);
     await cache.setNx('ais:lock', '1', 10_000);
-    const other = relayWith([{ vessels: [vessel('9', 1_000)], error: null }], clock, cache);
+    const other = relayWith(
+      [{ vessels: [vessel('9', 1_000)], error: null, confirmed: true, compression: null }],
+      clock,
+      cache,
+    );
     expect(await other.relay.snapshot()).toEqual({
       status: 'warming',
       error: null,
@@ -179,7 +212,10 @@ describe('AisRelay', () => {
 
   it('shares one collection between concurrent callers in a process', async () => {
     const clock = { t: 1_000 };
-    const { relay, collect } = relayWith([{ vessels: [vessel('1', 1_000)], error: null }], clock);
+    const { relay, collect } = relayWith(
+      [{ vessels: [vessel('1', 1_000)], error: null, confirmed: true, compression: null }],
+      clock,
+    );
     const [a, b] = await Promise.all([relay.snapshot(), relay.snapshot()]);
     expect(collect).toHaveBeenCalledTimes(1);
     expect(a).toEqual(b);

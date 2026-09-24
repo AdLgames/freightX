@@ -709,7 +709,9 @@ rows through `withOrg`; every POST carries `<CsrfInput/>`.
 - **Live AIS traffic** (`AISSTREAM_API_KEY`, `services/tracking/ais-relay.server.ts`,
   `routes/app.api.ais.tsx`, `lib/ais-client.ts`, `tracking-map.client.tsx`): aisstream.io does
   not accept browser connections, so the server relays it. A collection opens the stream,
-  subscribes to the UK bounding box, gathers position reports for five seconds and closes; the
+  subscribes to the UK bounding box (aisstream acknowledges with a `SubscriptionConfirmation`
+  and then sends binary frames of UTF-8 JSON), gathers position reports for five seconds and
+  closes; the
   merged snapshot (capped at 1,500 vessels, silent ones dropped after 15 minutes) is cached in
   Redis when configured (else in-process) and served fresh for 12 seconds, and a lock keeps one
   collection running at a time across instances (aisstream allows three connections per

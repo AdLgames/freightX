@@ -367,6 +367,22 @@ export function TrackingMapClient({ styleUrl, stateUrl, initialState, ais }: Tra
       });
       fitBounds(map, stateRef.current, aisUrl !== null);
     });
+    // The Home panel sizes the map with flex, so the container can still be collapsed when the
+    // style loads and the initial fit lands on a near-empty canvas; refit on the first real size.
+    let fittedAt = { w: 0, h: 0 };
+    map.on('load', () => {
+      fittedAt = { w: el.clientWidth, h: el.clientHeight };
+    });
+    map.on('resize', () => {
+      if (
+        (fittedAt.w < 100 || fittedAt.h < 100) &&
+        el.clientWidth >= 100 &&
+        el.clientHeight >= 100
+      ) {
+        fittedAt = { w: el.clientWidth, h: el.clientHeight };
+        fitBounds(map, stateRef.current, aisUrl !== null);
+      }
+    });
     raf = window.requestAnimationFrame(frame);
     return () => {
       window.cancelAnimationFrame(raf);
