@@ -33,8 +33,8 @@ describe('ais-client', () => {
       APIKey: 'k',
       BoundingBoxes: [
         [
-          [49, -6],
-          [53, 3],
+          [48, -12],
+          [61, 9],
         ],
       ],
       FilterMessageTypes: ['PositionReport'],

@@ -712,7 +712,7 @@ rows through `withOrg`; every POST carries `<CsrfInput/>`.
   subscribes to the UK bounding box (aisstream acknowledges with a `SubscriptionConfirmation`
   and then sends binary frames of UTF-8 JSON), gathers position reports for five seconds and
   closes; the
-  merged snapshot (capped at 1,500 vessels, silent ones dropped after 15 minutes) is cached in
+  merged snapshot (capped at 4,000 vessels, silent ones dropped after 15 minutes) is cached in
   Redis when configured (else in-process) and served fresh for 12 seconds, and a lock keeps one
   collection running at a time across instances (aisstream allows three connections per
   account). The browser polls `/app/api/ais?since=` every 10 seconds (members only, 30/min per
