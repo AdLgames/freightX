@@ -38,9 +38,10 @@ export const meta: Route.MetaFunction = ({ data: d }) => [
 
 export const links: Route.LinksFunction = () => [{ rel: 'stylesheet', href: maplibreCss }];
 
-export const headers: Route.HeadersFunction = ({ loaderHeaders }) => ({
+export const headers: Route.HeadersFunction = ({ loaderHeaders, parentHeaders }) => ({
   'Cache-Control': 'no-store',
-  [CSP_ADDITIONS_HEADER]: loaderHeaders.get(CSP_ADDITIONS_HEADER) ?? '',
+  [CSP_ADDITIONS_HEADER]:
+    loaderHeaders.get(CSP_ADDITIONS_HEADER) ?? parentHeaders.get(CSP_ADDITIONS_HEADER) ?? '',
 });
 
 const idSchema = z.uuid();

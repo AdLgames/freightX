@@ -28,3 +28,9 @@ export const mapCspAdditions = (
     'child-src': ['blob:'],
   };
 };
+
+/** Adds the aisstream WebSocket origin to `connect-src` when the Home map has an AIS key. */
+export const withAisOrigin = (additions: CspAdditions, aisOrigin: string | null): CspAdditions =>
+  aisOrigin
+    ? { ...additions, 'connect-src': [...(additions['connect-src'] ?? []), aisOrigin] }
+    : additions;

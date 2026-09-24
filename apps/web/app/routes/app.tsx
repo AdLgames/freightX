@@ -6,8 +6,10 @@ import { CsrfInput, CsrfProvider } from '../components/csrf';
 import { NavIcon } from '../components/workspace-icons';
 import { WORKSPACE_NAV } from '../components/workspace-nav';
 import { DISCLAIMER } from '../root';
+import { getApp } from '../services/app.server';
 import { requireOrgContext, withUser } from '../services/auth.server';
 import { userOrganizationsQuery } from '../services/organizations.server';
+import { CSP_ADDITIONS_HEADER, serializeCspAdditions } from '../services/security-headers.server';
 
 /**
  * Workspace shell for every /app/* route (M1 owns this file). The loader authenticates, resolves
@@ -24,7 +26,15 @@ export const handle = { layout: 'workspace' as const };
 
 export const meta: Route.MetaFunction = () => [{ title: 'Workspace — Harbour' }];
 
-export const headers: Route.HeadersFunction = () => ({ 'Cache-Control': 'no-store' });
+/**
+ * Every workspace document carries the map's CSP sources (tiles, blob workers, data icons, the
+ * AIS socket). A browser keeps the policy of the document it loaded, and any workspace page can
+ * navigate client-side to Home or a tracking detail, so the allowance has to be on all of them.
+ */
+export const headers: Route.HeadersFunction = ({ loaderHeaders }) => ({
+  'Cache-Control': 'no-store',
+  [CSP_ADDITIONS_HEADER]: loaderHeaders.get(CSP_ADDITIONS_HEADER) ?? '',
+});
 
 const initialsOf = (email: string): string => {
   const local = email.split('@')[0] ?? '';
@@ -36,7 +46,10 @@ const initialsOf = (email: string): string => {
 
 export const loader = async ({ request }: Route.LoaderArgs) => {
   const ctx = await requireOrgContext(request);
+  const app = await getApp();
   const orgs = await withUser(ctx, (tx) => userOrganizationsQuery(tx, ctx.user.id));
+  const headers = new Headers(ctx.headers);
+  headers.set(CSP_ADDITIONS_HEADER, serializeCspAdditions(app.tracking.mapCsp));
   return data(
     {
       user: { email: ctx.user.email, initials: initialsOf(ctx.user.email) },
@@ -46,7 +59,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
       csrfToken: ctx.session.data.csrfToken,
       nav: WORKSPACE_NAV.filter((item) => !item.permission || can(ctx.role, item.permission)),
     },
-    { headers: ctx.headers },
+    { headers },
   );
 };
 

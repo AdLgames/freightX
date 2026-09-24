@@ -6,7 +6,7 @@ import {
   parseCspAdditions,
   serializeCspAdditions,
 } from './security-headers.server';
-import { mapCspAdditions } from './tracking/csp.server';
+import { mapCspAdditions, withAisOrigin } from './tracking/csp.server';
 
 /** M9 — route-scoped CSP additions (ADR-0017). The global policy must stay byte-identical. */
 describe('contentSecurityPolicy', () => {
@@ -72,5 +72,21 @@ describe('contentSecurityPolicy', () => {
     const plain = new Headers();
     applySecurityHeaders(plain, 'n4');
     expect(plain.get('Content-Security-Policy')).toBe(contentSecurityPolicy('n4'));
+  });
+});
+
+describe('withAisOrigin', () => {
+  it('adds the aisstream socket to connect-src only when a key is configured', () => {
+    const base = mapCspAdditions('https://tiles.openfreemap.org/styles/liberty');
+    expect(withAisOrigin(base, null)).toEqual(base);
+    const withAis = withAisOrigin(base, 'wss://stream.aisstream.io');
+    expect(withAis['connect-src']).toEqual([
+      'https://tiles.openfreemap.org',
+      'wss://stream.aisstream.io',
+    ]);
+    const csp = contentSecurityPolicy('n', parseCspAdditions(serializeCspAdditions(withAis)));
+    expect(csp).toContain(
+      "connect-src 'self' https://tiles.openfreemap.org wss://stream.aisstream.io",
+    );
   });
 });
