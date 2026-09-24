@@ -1,17 +1,35 @@
 import { can } from '@harbour/db';
-import { AlertCircle, ArrowRight, Map as MapIcon, Plus } from 'lucide-react';
+import {
+  AlertCircle,
+  AlertTriangle,
+  Anchor,
+  ArrowRight,
+  FileText,
+  Map as MapIcon,
+  Plus,
+} from 'lucide-react';
 import maplibreCss from 'maplibre-gl/dist/maplibre-gl.css?url';
 import { Form, Link, data, redirect } from 'react-router';
 import type { Route } from './+types/app._index';
 import { CsrfInput } from '../components/csrf';
 import { gbp } from '../components/format';
+import { MarginWatchCard } from '../components/home/margin-watch-card';
 import { TreasuryCard } from '../components/home/treasury-card';
 import { TrackingMap } from '../components/tracking/tracking-map';
 import { modeName, portName } from '../data/ports';
+import { AIS_STREAM_ORIGIN } from '../lib/ais-client';
 import { getApp } from '../services/app.server';
 import { requireOrgContext, withOrg } from '../services/auth.server';
+import { loadMarginWatch } from '../services/bills/margin-watch.server';
 import { loadTreasury } from '../services/fx-treasury.server';
-import { homeActions, homeStats, startOfMonthUtc, type RecentDraft } from '../services/home.server';
+import {
+  RELEASE_DOCUMENT_WINDOW_DAYS,
+  homeAlerts,
+  homeStats,
+  startOfMonthUtc,
+  type ArrivalInput,
+  type RecentDraft,
+} from '../services/home.server';
 import { requestLogger } from '../services/logger.server';
 import { pageError } from '../services/page-error';
 import { CSP_ADDITIONS_HEADER, serializeCspAdditions } from '../services/security-headers.server';
@@ -35,12 +53,19 @@ import { listPaymentsDue } from '../services/orders/orders.server';
 // end M7
 
 /**
- * Workspace Home, the "Command Center" (docs/design-system.md). M1: the action-required banner.
- * Stat cards and recent drafts read real rows. The map panel hosts the M9 tracking map for every
- * active container of the organisation (same component and JSON feed as the tracking detail
- * route); with `DEMO_FLEET=on` a member can load a simulated fleet into it (services/tracking/
- * demo-fleet.ts) and the panel says so. The route's `headers()` adds the map's CSP sources for
- * this response only, exactly as the detail route does.
+ * Workspace Home, the "Command Center" (docs/design-system.md). Every figure on the page is read
+ * from the organisation's rows inside one `withOrg` transaction:
+ *
+ *   - Exceptions: a release document missing on a shipment arriving within a week (critical) and
+ *     the customs-profile gaps (warning) — services/home.server.ts `homeAlerts`.
+ *   - KPIs: active shipments, this month's estimated landed cost, and the margin watch (the open
+ *     purchase order furthest over its quote, from posted bills — services/bills/margin-watch).
+ *   - The live map: the M9 tracking map for every active container (same component and JSON feed
+ *     as the tracking detail route), the simulated fleet with `DEMO_FLEET=on`, and live AIS
+ *     traffic around the UK with `AISSTREAM_API_KEY`. The route's `headers()` adds the map's CSP
+ *     sources (tiles, and the AIS socket) for this response only.
+ *   - Recent drafts, the live treasury (ECB rates, 7-day move), the quick duty check and the
+ *     payments due.
  */
 
 export const meta: Route.MetaFunction = () => [{ title: 'Home — Harbour' }];
@@ -52,11 +77,14 @@ export const headers: Route.HeadersFunction = ({ loaderHeaders }) => ({
   [CSP_ADDITIONS_HEADER]: loaderHeaders.get(CSP_ADDITIONS_HEADER) ?? '',
 });
 
+const DAY_MS = 86_400_000;
+
 export const loader = async ({ request }: Route.LoaderArgs) => {
   const ctx = await requireOrgContext(request);
   const app = await getApp();
   const now = new Date();
   const demoFleetEnabled = app.tracking.demoFleetEnabled;
+  const aisKey = app.tracking.aisStreamKey;
   const result = await withOrg(ctx, async (tx) => {
     const org = await tx.organization.findUnique({
       where: { id: ctx.org.id },
@@ -88,13 +116,57 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
         },
       }),
     ]);
+
+    // Exceptions: arrivals inside the release-document window and the documents they hold.
+    const arriving = await tx.shipment.findMany({
+      where: {
+        status: { notIn: ['DELIVERED', 'CANCELLED'] },
+        eta: { not: null, lte: new Date(now.getTime() + RELEASE_DOCUMENT_WINDOW_DAYS * DAY_MS) },
+      },
+      orderBy: { eta: 'asc' },
+      take: 20,
+      select: { id: true, reference: true, destinationLocode: true, eta: true, quoteId: true },
+    });
+    const docs =
+      arriving.length > 0
+        ? await tx.document.findMany({
+            where: {
+              deletedAt: null,
+              status: { not: 'REJECTED' },
+              OR: [
+                { shipmentId: { in: arriving.map((s) => s.id) } },
+                {
+                  quoteId: {
+                    in: arriving.map((s) => s.quoteId).filter((q): q is string => q !== null),
+                  },
+                },
+              ],
+            },
+            select: { shipmentId: true, quoteId: true, type: true },
+          })
+        : [];
+    const arrivals: ArrivalInput[] = arriving.map((s) => ({
+      shipmentId: s.id,
+      reference: s.reference,
+      destinationName: s.destinationLocode ? portName(s.destinationLocode) : null,
+      etaIso: s.eta!.toISOString(),
+      quoteId: s.quoteId,
+      documentTypes: docs
+        .filter((d) => d.shipmentId === s.id || (s.quoteId !== null && d.quoteId === s.quoteId))
+        .map((d) => d.type),
+    }));
+
+    // Margin watch: open orders with posted bills against their accepted quote (M8 maths).
+    const marginWatch = await loadMarginWatch(tx, { fxStore: app.stores.fxStore, now });
+
     // Demo fleet: simulated vessels move on read (no worker needed); a no-op when the flag is off.
     if (demoFleetEnabled) await advanceDemoFleet(tx, { now, log: app.logger });
     const mapState = await loadMapState(tx, { now });
     return {
-      actionsInput: { eoriNumber: org?.eoriNumber ?? null, customsProfile },
+      alerts: homeAlerts({ eoriNumber: org?.eoriNumber ?? null, customsProfile, arrivals }, now),
       paymentsDue, // M7
       mapState,
+      marginWatch,
       stats: homeStats({
         activeShipments,
         monthQuoteTotals: monthQuotes.map((q) => q.totalLandedCostExVat.toString()),
@@ -114,16 +186,21 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
   // Treasury: ECB rows from the shared store (no API call; §5.7).
   const treasury = await loadTreasury(app.stores.fxStore, now);
   const headers = new Headers(ctx.headers);
-  headers.set(CSP_ADDITIONS_HEADER, serializeCspAdditions(app.tracking.mapCsp));
-  // Only derived action items leave the server; the EORI itself never does.
+  const csp = aisKey
+    ? {
+        ...app.tracking.mapCsp,
+        'connect-src': [...(app.tracking.mapCsp['connect-src'] ?? []), AIS_STREAM_ORIGIN],
+      }
+    : app.tracking.mapCsp;
+  headers.set(CSP_ADDITIONS_HEADER, serializeCspAdditions(csp));
+  // Only derived alert copy leaves the server; the EORI itself never does.
   return data(
     {
       orgName: ctx.org.name,
-      actions: homeActions(result.actionsInput),
       ...result,
-      actionsInput: undefined,
-      mapStyleUrl: app.tracking.mapStyleUrl,
       treasury,
+      mapStyleUrl: app.tracking.mapStyleUrl,
+      ais: aisKey ? { apiKey: aisKey } : null,
       tracking: {
         canTrack: can(ctx.role, 'shipment.track'),
         positionsConfigured: app.tracking.positionProviderConfigured,
@@ -208,19 +285,32 @@ const relativeTime = (iso: string, now = Date.now()): string => {
 };
 
 export default function WorkspaceHome({ loaderData, actionData }: Route.ComponentProps) {
-  const { orgName, actions, stats, drafts, paymentsDue, mapState, mapStyleUrl, tracking } =
-    loaderData; // M7: paymentsDue
-  const { treasury } = loaderData;
+  const {
+    orgName,
+    alerts,
+    stats,
+    drafts,
+    paymentsDue,
+    mapState,
+    mapStyleUrl,
+    ais,
+    tracking,
+    treasury,
+    marginWatch,
+  } = loaderData;
   const quickDuty = actionData?.quickDuty ?? null; // M4
   const positioned = mapState.containers.filter((c) => c.ping);
   const simulated = positioned.some((c) => c.ping?.positionSource === SIMULATED_SOURCE);
+  const showMap = positioned.length > 0 || ais !== null;
   const pill = simulated
     ? { dot: 'dot-simulated', text: 'Simulated data' }
     : positioned.length > 0 && tracking.positionsConfigured
       ? { dot: 'dot-live', text: 'Live tracking' }
       : positioned.length > 0
         ? { dot: 'dot-muted', text: 'Manual milestones' }
-        : { dot: 'dot-muted', text: 'Tracking' };
+        : ais
+          ? { dot: 'dot-live', text: 'Live AIS' }
+          : { dot: 'dot-muted', text: 'Tracking' };
   return (
     <>
       <div className="page-head">
@@ -233,38 +323,51 @@ export default function WorkspaceHome({ loaderData, actionData }: Route.Componen
         </Link>
       </div>
 
-      {actions.length > 0 ? (
-        <section className="action-banner" aria-labelledby="action-required-title">
-          <AlertCircle className="icon" aria-hidden="true" />
-          <div>
-            <h2 id="action-required-title">Action required: complete your customs profile</h2>
-            <ul>
-              {actions.map((a) => (
-                <li key={a.id}>{a.text}</li>
-              ))}
-            </ul>
-            <Link to="/app/settings" className="action-link">
-              Complete setup <ArrowRight className="icon" aria-hidden="true" />
-            </Link>
-            <p className="hint on-dark">You can still get quotes in the meantime.</p>
-          </div>
+      {alerts.length > 0 ? (
+        <section className="alert-list" aria-label="Exceptions and actions">
+          {alerts.map((a) => (
+            <article
+              key={a.id}
+              className={`action-banner alert ${a.level === 'critical' ? 'alert-critical' : 'alert-warning'}`}
+            >
+              {a.level === 'critical' ? (
+                <AlertTriangle className="icon" aria-hidden="true" />
+              ) : (
+                <AlertCircle className="icon" aria-hidden="true" />
+              )}
+              <div>
+                <h2>{a.title}</h2>
+                <p className="alert-message">{a.message}</p>
+                <p className="alert-actions">
+                  <Link to={a.actionHref} className="action-link">
+                    {a.actionText} <ArrowRight className="icon" aria-hidden="true" />
+                  </Link>
+                  {a.secondary ? (
+                    <Link to={a.secondary.href} className="action-link secondary">
+                      {a.secondary.text}
+                    </Link>
+                  ) : null}
+                </p>
+              </div>
+            </article>
+          ))}
         </section>
       ) : null}
 
-      <section className="stat-grid" aria-label="At a glance">
+      <section className="stat-grid kpi-grid" aria-label="At a glance">
         <div className="card stat">
           <p className="stat-label">Active shipments</p>
-          <p className="stat-value">{stats.activeShipments}</p>
+          <p className="stat-value stat-row">
+            {stats.activeShipments}
+            <Anchor className="icon stat-icon" aria-hidden="true" />
+          </p>
         </div>
-        <div className="card stat">
+        <div className="card stat wide">
           <p className="stat-label">Estimated landed cost this month</p>
           <p className="stat-value">{gbp(stats.estimatedLandedCostGbp)}</p>
           <p className="stat-sub">ready and accepted quotes, ex VAT</p>
         </div>
-        <div className="card stat">
-          <p className="stat-label">Draft quotes</p>
-          <p className="stat-value">{stats.draftQuotes}</p>
-        </div>
+        <MarginWatchCard watch={marginWatch} />
       </section>
 
       <div className="home-grid">
@@ -284,24 +387,39 @@ export default function WorkspaceHome({ loaderData, actionData }: Route.Componen
               </Link>
             ) : null}
           </div>
-          {positioned.length > 0 ? (
+          {showMap ? (
             <div className="map-panel-body">
               <TrackingMap
                 styleUrl={mapStyleUrl}
                 stateUrl="/app/api/map-state"
                 initialState={mapState}
+                ais={ais}
               />
-              {simulated && tracking.canTrack && tracking.demoFleetEnabled ? (
+              {tracking.canTrack && tracking.demoFleetEnabled ? (
                 <Form method="post" action="/app?index" className="map-panel-actions">
                   <CsrfInput />
-                  <input type="hidden" name="intent" value="demo-fleet-clear" />
-                  <span className="muted small">
-                    These three ships are fictional and move on their own. Real shipments you track
-                    appear alongside them.
-                  </span>
-                  <button type="submit" className="button ghost-dark small">
-                    Clear simulated fleet
-                  </button>
+                  {simulated ? (
+                    <>
+                      <input type="hidden" name="intent" value="demo-fleet-clear" />
+                      <span className="muted small">
+                        The three SIM ships are fictional and move on their own. Real shipments you
+                        track appear alongside them.
+                      </span>
+                      <button type="submit" className="button ghost-dark small">
+                        Clear simulated fleet
+                      </button>
+                    </>
+                  ) : positioned.length === 0 ? (
+                    <>
+                      <input type="hidden" name="intent" value="demo-fleet-seed" />
+                      <span className="muted small">
+                        No shipments tracked yet. Live AIS traffic is shown around the UK.
+                      </span>
+                      <button type="submit" className="button lime small">
+                        Load a simulated fleet
+                      </button>
+                    </>
+                  ) : null}
                 </Form>
               ) : null}
             </div>
@@ -331,33 +449,38 @@ export default function WorkspaceHome({ loaderData, actionData }: Route.Componen
           )}
         </section>
 
-        <section className="card drafts" aria-labelledby="drafts-title">
-          <h2 id="drafts-title">Recent drafts</h2>
-          {drafts.length === 0 ? (
-            <p className="muted">
-              No draft quotes yet. <Link to="/app/quotes/new">Start one</Link>.
-            </p>
-          ) : (
-            <ul className="draft-list">
-              {drafts.map((d) => (
-                <li key={d.id}>
-                  <Link to={`/app/quotes/${d.id}/edit`} className="draft-row">
-                    <span>
-                      <span className="draft-route">{d.route}</span>
-                      <span className="muted small">
-                        Updated {relativeTime(d.updatedAt)} · {d.mode}
+        <div className="home-stack">
+          <section className="card drafts" aria-labelledby="drafts-title">
+            <h2 id="drafts-title">
+              Recent drafts <FileText className="icon muted" aria-hidden="true" />
+            </h2>
+            {drafts.length === 0 ? (
+              <p className="muted">
+                No draft quotes yet. <Link to="/app/quotes/new">Start one</Link>.
+              </p>
+            ) : (
+              <ul className="draft-list">
+                {drafts.map((d) => (
+                  <li key={d.id}>
+                    <Link to={`/app/quotes/${d.id}/edit`} className="draft-row">
+                      <span>
+                        <span className="draft-route">{d.route}</span>
+                        <span className="muted small">
+                          Updated {relativeTime(d.updatedAt)} · {d.mode}
+                        </span>
                       </span>
-                    </span>
-                    <span className="draft-total">
-                      {gbp(d.totalExVatGbp)}
-                      <span className="draft-cta">Continue →</span>
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+                      <span className="draft-total">
+                        {gbp(d.totalExVatGbp)}
+                        <span className="draft-cta">Continue →</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <TreasuryCard treasury={treasury} />
+        </div>
 
         {/* M4 */}
         <QuickDutyCard
@@ -366,12 +489,9 @@ export default function WorkspaceHome({ loaderData, actionData }: Route.Componen
           result={quickDuty?.result ?? null}
         />
         {/* end M4 */}
-        <div className="home-stack">
-          <TreasuryCard treasury={treasury} />
-          {/* M7 */}
-          <PaymentsDueCard payments={paymentsDue} />
-          {/* end M7 */}
-        </div>
+        {/* M7 */}
+        <PaymentsDueCard payments={paymentsDue} />
+        {/* end M7 */}
       </div>
     </>
   );

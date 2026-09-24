@@ -48,6 +48,8 @@ export interface TrackingServices {
   mapCsp: CspAdditions;
   /** `DEMO_FLEET=on`: the Home map offers a simulated fleet and advances it on every map load. */
   demoFleetEnabled: boolean;
+  /** `AISSTREAM_API_KEY`: live AIS traffic overlay on the Home map (key reaches the browser). */
+  aisStreamKey: string | null;
   /** Webhook provider for `/webhooks/tracking/:providerId`, or null for an unknown id. */
   webhookProvider(providerId: string): MilestoneProvider | null;
   webhookSecret(providerId: string): string | undefined;
@@ -149,6 +151,7 @@ export const createTrackingServices = (deps: TrackingDeps): TrackingServices => 
     queue: queue.backend,
     mapStyleUrl: env.MAP_STYLE_URL,
     demoFleet: env.DEMO_FLEET,
+    aisStream: env.AISSTREAM_API_KEY !== undefined,
   });
 
   return {
@@ -160,6 +163,7 @@ export const createTrackingServices = (deps: TrackingDeps): TrackingServices => 
     mapStyleUrl: env.MAP_STYLE_URL,
     mapCsp: mapCspAdditions(env.MAP_STYLE_URL, env.MAP_TILE_ORIGINS ?? []),
     demoFleetEnabled: env.DEMO_FLEET === 'on',
+    aisStreamKey: env.AISSTREAM_API_KEY ?? null,
     webhookProvider: (providerId) => milestoneProviderForWebhook(providerId, env, { now }),
     webhookSecret: (providerId) =>
       providerId === 'terminal49' ? env.TERMINAL49_WEBHOOK_SECRET : undefined,

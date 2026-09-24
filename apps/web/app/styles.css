@@ -2326,36 +2326,155 @@ fieldset.readonly .form-actions {
   padding: 10px 0;
 }
 
-/* Home: the right-hand column under "Recent drafts" stacks the treasury and payments cards. */
+/* Home: the right-hand column stacks "Recent drafts" and the treasury. */
 .home-stack {
   display: grid;
   gap: 1.5rem;
   align-content: start;
 }
 
-/* Home treasury widget (live GBP rates with a 7-day trend). */
+/* Home exceptions: the action banner as a list, with a critical (red) variant. */
+.alert-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+}
+.alert-list .action-banner {
+  margin-bottom: 0;
+}
+.alert-critical {
+  border-color: rgb(239 68 68 / 0.45);
+}
+.alert-critical .icon {
+  color: #f87171;
+}
+.alert-critical .action-link {
+  color: #f87171;
+}
+.alert-message {
+  margin: 0 0 0.6rem;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+.alert-actions {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  margin: 0;
+}
+.action-link.secondary {
+  color: var(--slate-400);
+}
+
+/* Home KPI row: shipments, landed cost (wide) and the margin watch. */
+.kpi-grid {
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+}
+@media (min-width: 1100px) {
+  .kpi-grid {
+    grid-template-columns: 1fr 2fr 1fr;
+  }
+}
+.stat-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+.stat-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--slate-300, #cbd5e1);
+}
+.stat-value.small {
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+.margin-card {
+  position: relative;
+  overflow: hidden;
+}
+.margin-card.over {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+.margin-card.over .stat-label {
+  color: var(--red-600);
+}
+.margin-card.over .stat-value a {
+  color: #7f1d1d;
+  text-decoration: none;
+}
+.margin-card.over .stat-value a:hover {
+  text-decoration: underline;
+}
+.margin-card.over .stat-sub {
+  color: #991b1b;
+}
+.margin-card-bg {
+  position: absolute;
+  right: 0.75rem;
+  top: 0.75rem;
+  width: 4rem;
+  height: 4rem;
+  color: #ef4444;
+  opacity: 0.12;
+  pointer-events: none;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.card-head h2 {
+  margin: 0;
+}
+.card-head .icon.muted,
+.drafts h2 .icon.muted {
+  width: 1rem;
+  height: 1rem;
+  color: var(--slate-400);
+}
+.drafts h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.legend-dot.ais {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+  background: var(--lime-500);
+  vertical-align: middle;
+}
+
+/* Home treasury widget (live GBP rates with a 7-day trend), two tiles. */
 .treasury h2 {
   margin-top: 0;
 }
-.treasury-list {
+.treasury-tiles {
   list-style: none;
   margin: 0;
   padding: 0;
-}
-.treasury-list li {
   display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: baseline;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
-  padding: 10px 0;
 }
-.treasury-list li + li {
-  border-top: 1px solid var(--slate-100);
+.treasury-tile {
+  background: var(--slate-50);
+  border: 1px solid var(--slate-100);
+  border-radius: 10px;
+  padding: 0.75rem;
 }
-.treasury-pair {
-  font-weight: 700;
+.treasury-tile .stat-label {
+  margin-bottom: 0.25rem;
 }
 .treasury-rate {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   font-size: 1.35rem;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -2363,24 +2482,28 @@ fieldset.readonly .form-actions {
 .treasury-trend {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.85rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
   color: var(--slate-500);
 }
 .treasury-trend .icon {
   width: 1rem;
   height: 1rem;
 }
-.treasury-trend.stronger {
+.treasury-trend.stronger,
+.treasury-change.stronger {
   color: var(--emerald-600);
 }
-.treasury-trend.weaker {
+.treasury-trend.weaker,
+.treasury-change.weaker {
   color: var(--red-600);
 }
+.treasury-change {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--slate-500);
+}
 .treasury-foot {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
 }
 
 /* ---------- M8: bills, costs and variance ---------- */
