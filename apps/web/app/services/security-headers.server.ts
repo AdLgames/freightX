@@ -74,21 +74,43 @@ export const contentSecurityPolicy = (nonce: string, rawAdditions: CspAdditions 
   return base.map(([d, s]) => `${d} ${[...new Set(s)].join(' ')}`).join('; ');
 };
 
+/** Merges two addition sets directive by directive (duplicates are dropped when serialised). */
+export const mergeCspAdditions = (a: CspAdditions, b: CspAdditions): CspAdditions => {
+  const out: Record<string, string[]> = {};
+  for (const src of [a, b]) {
+    for (const [directive, sources] of Object.entries(src)) {
+      out[directive] = [...(out[directive] ?? []), ...sources];
+    }
+  }
+  return out;
+};
+
 export const applySecurityHeaders = (
   headers: Headers,
   nonce: string,
-  opts: { hsts?: boolean; connectSrc?: readonly string[] } = {}, // M5: connectSrc
+  opts: {
+    hsts?: boolean;
+    /** M5: the direct-to-storage upload origin. */
+    connectSrc?: readonly string[];
+    /**
+     * Process-wide additions applied to every response (the map tile host, blob workers, data:
+     * icons and the AIS socket). A browser keeps the policy of the document it loaded and the
+     * app navigates client-side into the map pages, so these cannot be per-route only.
+     */
+    additions?: CspAdditions;
+  } = {},
 ): Headers => {
   const routeAdditions = parseCspAdditions(headers.get(CSP_ADDITIONS_HEADER)); // M9
   headers.delete(CSP_ADDITIONS_HEADER); // M9: never sent to the client
+  const merged = mergeCspAdditions(opts.additions ?? {}, routeAdditions);
   // M5: direct-to-storage uploads need the storage origin in connect-src (merged like a route addition).
   const additions: CspAdditions =
     opts.connectSrc && opts.connectSrc.length > 0
       ? {
-          ...routeAdditions,
-          'connect-src': [...(routeAdditions['connect-src'] ?? []), ...opts.connectSrc],
+          ...merged,
+          'connect-src': [...(merged['connect-src'] ?? []), ...opts.connectSrc],
         }
-      : routeAdditions;
+      : merged;
   headers.set('Content-Security-Policy', contentSecurityPolicy(nonce, additions));
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
