@@ -78,6 +78,32 @@ describe('collectAisReports', () => {
     }
   });
 
+  it('hands over batches on the flush interval and the remainder at the end', async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = new FakeSocket();
+      const flushes: string[][] = [];
+      const done = collectAisReports('k', {
+        durationMs: 2_500,
+        flushMs: 1_000,
+        connect: () => socket,
+        onFlush: (b) => flushes.push(b.map((v) => v.mmsi)),
+      });
+      socket.emit('open');
+      socket.emit('message', report(1));
+      await vi.advanceTimersByTimeAsync(1_000);
+      socket.emit('message', report(2));
+      socket.emit('message', report(1));
+      await vi.advanceTimersByTimeAsync(1_000);
+      socket.emit('message', report(3));
+      await vi.advanceTimersByTimeAsync(500);
+      await done;
+      expect(flushes).toEqual([['1'], ['2', '1'], ['3']]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports a subscription that was never confirmed', async () => {
     vi.useFakeTimers();
     try {
@@ -130,15 +156,29 @@ const vessel = (mmsi: string, seenAt: number): AisVessel => ({
 });
 
 describe('AisRelay', () => {
+  const ok = (...vs: AisVessel[]): CollectResult => ({
+    vessels: vs,
+    error: null,
+    confirmed: true,
+    compression: null,
+  });
   const relayWith = (
     results: CollectResult[],
     clock: { t: number },
     cache = new MemoryAisCache(() => clock.t),
   ) => {
-    const collect = vi.fn(
-      async () =>
-        results.shift() ?? { vessels: [], error: null, confirmed: true, compression: null },
-    );
+    const flushes: AisVessel[][] = [];
+    const collect = vi.fn(async (_key: string, onFlush: (b: AisVessel[]) => void) => {
+      const r = results.shift() ?? ok();
+      // Flush the first vessel early, like the live collector does every few seconds.
+      if (r.vessels[0]) {
+        onFlush([r.vessels[0]]);
+        flushes.push([r.vessels[0]]);
+      }
+      await Promise.resolve();
+      return r;
+    });
+    const background = vi.fn();
     const relay = new AisRelay({
       apiKey: 'k',
       cache,
@@ -146,47 +186,84 @@ describe('AisRelay', () => {
       now: () => clock.t,
       collect,
       freshMs: 12_000,
+      background,
     });
-    return { relay, collect, cache };
+    return { relay, collect, cache, background, flushes };
   };
 
-  it('collects once, serves the snapshot while fresh, then merges a new collection', async () => {
+  it('answers from the cache and collects in the background, merging as it goes', async () => {
     const clock = { t: 100_000 };
-    const { relay, collect } = relayWith(
-      [
-        { vessels: [vessel('1', 100_000)], error: null, confirmed: true, compression: null },
-        { vessels: [vessel('2', 120_000)], error: null, confirmed: true, compression: null },
-      ],
+    const { relay, collect, background } = relayWith(
+      [ok(vessel('1', 100_000), vessel('3', 100_000)), ok(vessel('2', 120_000))],
       clock,
     );
+    // Nothing cached yet: warming, and a collection has been kicked off (handed to waitUntil).
+    expect(await relay.snapshot()).toEqual({
+      status: 'warming',
+      error: null,
+      collectedAt: 0,
+      v: [],
+    });
+    expect(background).toHaveBeenCalledTimes(1);
+    await relay.idle();
+    expect(collect).toHaveBeenCalledTimes(1);
     const first = await relay.snapshot();
     expect(first.status).toBe('live');
-    expect(first.v.map((t) => t[0])).toEqual(['1']);
+    expect(first.v.map((t) => t[0]).sort()).toEqual(['1', '3']);
+    // Fresh: served as is, no new collection.
     clock.t += 5_000;
-    const again = await relay.snapshot();
-    expect(again.collectedAt).toBe(100_000);
+    expect((await relay.snapshot()).collectedAt).toBe(100_000);
     expect(collect).toHaveBeenCalledTimes(1);
-
+    // Stale: the old picture is returned immediately and a new collection starts behind it.
     clock.t = 120_000;
-    const merged = await relay.snapshot();
+    const stale = await relay.snapshot();
+    expect(stale.collectedAt).toBe(100_000);
+    await relay.idle();
     expect(collect).toHaveBeenCalledTimes(2);
-    expect(merged.v.map((t) => t[0]).sort()).toEqual(['1', '2']);
+    const merged = await relay.snapshot();
+    expect(merged.collectedAt).toBe(120_000);
+    expect(merged.v.map((t) => t[0]).sort()).toEqual(['1', '2', '3']);
     // `since` trims to vessels heard after the client's last snapshot.
-    const delta = await relay.snapshot(100_000);
-    expect(delta.v.map((t) => t[0])).toEqual(['2']);
-
+    expect((await relay.snapshot(100_000)).v.map((t) => t[0])).toEqual(['2']);
     // Silent vessels fall out after the stale window.
     clock.t = 100_000 + AIS_STALE_MS + 1;
-    const pruned = await relay.snapshot();
-    expect(pruned.v.map((t) => t[0])).toEqual(['2']);
+    await relay.snapshot();
+    await relay.idle();
+    expect((await relay.snapshot()).v.map((t) => t[0])).toEqual(['2']);
   });
 
-  it('reports the provider refusal as an error status, and warms up behind another collector', async () => {
+  it('writes each flush to the cache before the collection ends', async () => {
+    const clock = { t: 1_000 };
+    const cache = new MemoryAisCache(() => clock.t);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const collect = vi.fn(async (_key: string, onFlush: (b: AisVessel[]) => void) => {
+      onFlush([vessel('7', 1_000)]);
+      await gate;
+      return ok(vessel('8', 1_000));
+    });
+    const relay = new AisRelay({ apiKey: 'k', cache, log, now: () => clock.t, collect });
+    await relay.snapshot();
+    await Promise.resolve();
+    await Promise.resolve();
+    const midway = await relay.snapshot();
+    expect(midway.status).toBe('live');
+    expect(midway.v.map((t) => t[0])).toEqual(['7']);
+    release();
+    await relay.idle();
+    expect((await relay.snapshot()).v.map((t) => t[0]).sort()).toEqual(['7', '8']);
+  });
+
+  it('reports the provider refusal as an error status, and stays quiet behind another collector', async () => {
     const clock = { t: 1_000 };
     const { relay } = relayWith(
       [{ vessels: [], error: 'Api Key Is Not Valid', confirmed: false, compression: null }],
       clock,
     );
+    await relay.snapshot();
+    await relay.idle();
     expect(await relay.snapshot()).toMatchObject({
       status: 'error',
       error: 'Api Key Is Not Valid',
@@ -196,29 +273,23 @@ describe('AisRelay', () => {
     // Another instance holds the lock and nothing is cached yet: warming, no collection.
     const cache = new MemoryAisCache(() => clock.t);
     await cache.setNx('ais:lock', '1', 10_000);
-    const other = relayWith(
-      [{ vessels: [vessel('9', 1_000)], error: null, confirmed: true, compression: null }],
-      clock,
-      cache,
-    );
+    const other = relayWith([ok(vessel('9', 1_000))], clock, cache);
     expect(await other.relay.snapshot()).toEqual({
       status: 'warming',
       error: null,
       collectedAt: 0,
       v: [],
     });
+    await other.relay.idle();
     expect(other.collect).not.toHaveBeenCalled();
   });
 
-  it('shares one collection between concurrent callers in a process', async () => {
+  it('runs one collection per process however many callers arrive', async () => {
     const clock = { t: 1_000 };
-    const { relay, collect } = relayWith(
-      [{ vessels: [vessel('1', 1_000)], error: null, confirmed: true, compression: null }],
-      clock,
-    );
-    const [a, b] = await Promise.all([relay.snapshot(), relay.snapshot()]);
+    const { relay, collect } = relayWith([ok(vessel('1', 1_000))], clock);
+    await Promise.all([relay.snapshot(), relay.snapshot(), relay.snapshot()]);
+    await relay.idle();
     expect(collect).toHaveBeenCalledTimes(1);
-    expect(a).toEqual(b);
   });
 });
 

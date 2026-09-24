@@ -14,17 +14,21 @@ import type { Logger } from '../logger.server';
 
 /**
  * Live AIS relay (Home map). aisstream.io does not permit browser connections, so the server
- * holds the socket: each collection opens the stream, subscribes to the UK box, gathers position
- * reports for a few seconds and closes. Snapshots are merged into a cache shared across
- * instances (Redis when configured, else this process) and served to the browser, which polls
- * `/app/api/ais`. One collection at a time (a lock) keeps us inside aisstream's three
- * connections per account however many members have the Home page open; a request that finds
- * the lock taken gets the last snapshot. The API key never leaves the server.
+ * holds the socket. Every request is answered straight from the shared snapshot cache (Redis
+ * when configured, else this process); when that snapshot is stale the request also starts a
+ * collection IN THE BACKGROUND (`waitUntil` on Vercel) and does not wait for it. A collection
+ * opens the stream, subscribes to the UK box and, for `AIS_COLLECT_MS`, merges what it hears
+ * into the cache every `AIS_FLUSH_MS`, so pollers see the picture fill in while it runs. One
+ * collection at a time (a lock) keeps us inside aisstream's three connections per account
+ * however many members have the Home page open, and nothing runs while nobody is looking. The
+ * API key never leaves the server.
  */
-export const AIS_COLLECT_MS = 5_000;
-/** A snapshot younger than this is served as is; older ones trigger a fresh collection. */
+export const AIS_COLLECT_MS = 25_000;
+/** During a collection, merge into the cache this often. */
+export const AIS_FLUSH_MS = 5_000;
+/** A snapshot younger than this is served as is; an older one also kicks off a collection. */
 export const AIS_FRESH_MS = 12_000;
-const LOCK_MS = AIS_COLLECT_MS + 10_000;
+const LOCK_MS = AIS_COLLECT_MS + 15_000;
 const SNAPSHOT_KEY = 'ais:snapshot';
 const LOCK_KEY = 'ais:lock';
 
@@ -85,6 +89,9 @@ const parseConfirmation = (raw: string): { compression: boolean | null } | null 
 export interface CollectOptions {
   durationMs?: number;
   now?: () => number;
+  /** Hand over the reports heard so far every `flushMs` (see `onFlush`). */
+  flushMs?: number;
+  onFlush?: (batch: AisVessel[]) => void;
   /** Test seam: replaces `new WebSocket(AIS_STREAM_URL)`. */
   connect?: () => AisSocketLike;
 }
@@ -108,6 +115,14 @@ export const collectAisReports = (
     const now = opts.now ?? (() => Date.now());
     const durationMs = opts.durationMs ?? AIS_COLLECT_MS;
     const vessels = new Map<string, AisVessel>();
+    const batch = new Map<string, AisVessel>();
+    let flusher: ReturnType<typeof setInterval> | undefined;
+    const flush = () => {
+      if (batch.size === 0 || !opts.onFlush) return;
+      const out = [...batch.values()];
+      batch.clear();
+      opts.onFlush(out);
+    };
     let error: string | null = null;
     let confirmed = false;
     let compression: boolean | null = null;
@@ -118,6 +133,8 @@ export const collectAisReports = (
       if (done) return;
       done = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (flusher !== undefined) clearInterval(flusher);
+      flush();
       try {
         socket?.close();
       } catch {
@@ -145,6 +162,7 @@ export const collectAisReports = (
     socket.addEventListener('open', () => {
       socket?.send(aisSubscribeMessage(apiKey));
       subscribed = true;
+      if (opts.onFlush) flusher = setInterval(flush, opts.flushMs ?? AIS_FLUSH_MS);
       if (timer !== undefined) clearTimeout(timer);
       timer = setTimeout(
         () => finish(vessels.size === 0 && !confirmed ? AIS_UNCONFIRMED_MESSAGE : null),
@@ -166,7 +184,10 @@ export const collectAisReports = (
         return;
       }
       const v = parseAisMessage(raw, now());
-      if (v) vessels.set(v.mmsi, v);
+      if (v) {
+        vessels.set(v.mmsi, v);
+        batch.set(v.mmsi, v);
+      }
     };
     socket.addEventListener('message', (ev) => {
       const text = frameText(ev.data);
@@ -252,69 +273,90 @@ export interface AisRelayDeps {
   log: Logger;
   now?: () => number;
   /** Test seam: replaces the live collector. */
-  collect?: (apiKey: string) => Promise<CollectResult>;
+  collect?: (apiKey: string, onFlush: (batch: AisVessel[]) => void) => Promise<CollectResult>;
   freshMs?: number;
+  /**
+   * Keeps a background collection alive after the response has gone out (Vercel `waitUntil`).
+   * Without it the promise merely runs unobserved, which is fine for a long-lived process.
+   */
+  background?: (work: Promise<unknown>) => void;
 }
 
+type Collector = NonNullable<AisRelayDeps['collect']>;
+
 export class AisRelay {
-  private inFlight: Promise<AisSnapshotResponse> | null = null;
+  private inFlight: Promise<void> | null = null;
   private readonly now: () => number;
-  private readonly collect: (apiKey: string) => Promise<CollectResult>;
+  private readonly collect: Collector;
   private readonly freshMs: number;
 
   constructor(private readonly deps: AisRelayDeps) {
     this.now = deps.now ?? (() => Date.now());
-    this.collect = deps.collect ?? ((key) => collectAisReports(key, { now: this.now }));
+    this.collect =
+      deps.collect ?? ((key, onFlush) => collectAisReports(key, { now: this.now, onFlush }));
     this.freshMs = deps.freshMs ?? AIS_FRESH_MS;
   }
 
   /**
-   * The current picture: the cached snapshot when it is fresh, otherwise a new collection merged
-   * into it. `since` (ms) trims the response to vessels heard after that instant.
+   * The current picture, straight from the cache; a stale (or missing) snapshot also starts a
+   * background collection, which the caller never waits for. `since` (ms) trims the response to
+   * vessels heard after that instant. "warming" = nothing collected yet.
    */
   async snapshot(since = 0): Promise<AisSnapshotResponse> {
     const cached = await this.read();
-    const t = this.now();
-    if (cached && t - cached.collectedAt < this.freshMs) return this.respond(cached, since);
-    // One collection per process at a time: later callers join the promise, lock wait included.
-    this.inFlight ??= this.lockAndRefresh(cached).finally(() => {
-      this.inFlight = null;
-    });
-    return this.inFlight.then((r) => trim(r, since));
+    if (!cached || this.now() - cached.collectedAt >= this.freshMs) this.kick(cached);
+    return cached
+      ? this.respond(cached, since)
+      : { status: 'warming', error: null, collectedAt: 0, v: [] };
   }
 
-  private async lockAndRefresh(cached: StoredSnapshot | null): Promise<AisSnapshotResponse> {
-    if (!(await this.tryLock())) {
-      return cached
-        ? this.respond(cached, 0)
-        : { status: 'warming', error: null, collectedAt: 0, v: [] };
-    }
-    return this.refresh(cached);
+  /** Resolves once the collection this process is running (if any) has finished. Tests. */
+  idle(): Promise<void> {
+    return this.inFlight ?? Promise.resolve();
   }
 
-  private async refresh(previous: StoredSnapshot | null): Promise<AisSnapshotResponse> {
+  /** One collection per process at a time; the lock keeps it to one per deployment. */
+  private kick(cached: StoredSnapshot | null): void {
+    if (this.inFlight) return;
+    this.inFlight = this.lockAndRefresh(cached)
+      .catch((err: unknown) => this.deps.log.warn('ais.collect_crashed', { error: String(err) }))
+      .finally(() => {
+        this.inFlight = null;
+      });
+    this.deps.background?.(this.inFlight);
+  }
+
+  private async lockAndRefresh(cached: StoredSnapshot | null): Promise<void> {
+    if (!(await this.tryLock())) return;
+    await this.refresh(cached);
+  }
+
+  private async refresh(previous: StoredSnapshot | null): Promise<void> {
     const { apiKey, cache, log } = this.deps;
-    try {
-      const result = await this.collect(apiKey);
+    const merged = new Map<string, AisVessel>();
+    for (const v of decodeAisVessels(previous?.v ?? [])) merged.set(v.mmsi, v);
+    let writes: Promise<void> = Promise.resolve();
+    const store = (batch: AisVessel[], error: string | null): Promise<void> => {
       const t = this.now();
-      const merged = new Map<string, AisVessel>();
-      for (const v of decodeAisVessels(previous?.v ?? [])) merged.set(v.mmsi, v);
-      for (const v of result.vessels) merged.set(v.mmsi, v);
+      for (const v of batch) merged.set(v.mmsi, v);
       pruneAisVessels(merged, t);
       const stored: StoredSnapshot = {
         collectedAt: t,
-        error: result.error,
+        error,
         v: encodeAisVessels(merged.values()),
       };
+      writes = writes.then(() => this.write(stored));
+      return writes;
+    };
+    try {
+      const result = await this.collect(apiKey, (batch) => void store(batch, null));
       if (result.error) log.warn('ais.collect_failed', { error: result.error });
       else
         log.info('ais.collected', {
           reports: result.vessels.length,
-          vessels: stored.v.length,
           compression: result.compression,
         });
-      await this.write(stored);
-      return this.respond(stored, 0);
+      await store(result.vessels, result.error);
     } finally {
       await cache.del(LOCK_KEY).catch(() => undefined);
     }
