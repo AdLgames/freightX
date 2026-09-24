@@ -587,3 +587,95 @@ member) drives the routes end to end with the recorded tariff fixtures
 SKU uniqueness, archive, unverified save when the fetch fails, VIEWER denied, pickup default
 uniqueness and the payment-terms CHECKs, cross-tenant negatives through the routes, the services
 and raw SQL under RLS, and the no-PII log rule.
+
+## Quotes (M4)
+
+Routes: `/app/quotes` (list, `app.quotes.tsx`), `/app/quotes/new` and `/app/quotes/:id/edit`
+(the builder, `app.quotes_.new.tsx` / `app.quotes_.$id_.edit.tsx`), `/app/quotes/:id` (detail and
+actions, `app.quotes_.$id.tsx`), `POST /app/api/quick-duty` (JSON). Services in
+`app/services/quotes/`, schemas in `app/validators/quote.ts`, components in
+`app/components/quotes/`. Every loader/action starts with `requireOrgContext` and reads tenant
+rows through `withOrg`; every POST carries `<CsrfInput/>`.
+
+### Builder
+
+- **Pipeline.** `services/quotes/pipeline.server.ts` extends the Phase 0 calculator pipeline to
+  catalogue lines: resolveProducts (rows → `productToQuoteLineSnapshot`) → resolveFx (every
+  currency on the quote, one optional manual override) → resolveFreight (rate sheet for the whole
+  shipment) → resolveTariff (once per distinct HS code, through the calculator's exported
+  `resolveTariffStage`) → `computeQuote`. A 6/8-digit product code is never resolved here: the
+  10-digit choice belongs on the product, so the line is marked unavailable and the quote is
+  indicative. Unverified products give `HS_UNVERIFIED` → `INDICATIVE`, as in the calculator.
+- **Inputs.** Supplier (optional; pre-fills the incoterm and the origin port from its default
+  pickup location's `closestPortCode` — duty origin always comes from each product), incoterm
+  radios with plain-English labels, route and mode from the rate-sheet lanes, lines added from
+  the catalogue (quantity, per-line assists and preference claim; HS code, origin, value,
+  currency, weight and volume are read-only with an "Edit product" link), insurance premium,
+  include-origin-fees (FCA/FOB), the supplier's freight breakdown (DAP/DPU), a manual FX rate for
+  one currency, VAT registered / PVA and the duty payment method with broker fee terms — all
+  defaulted from the organisation and its customs profile (`readCustomsProfile`; env defaults
+  `BROKER_DEFERMENT_FEE_PCT`/`_MIN_GBP` when the profile has none).
+- **Progressive enhancement.** The form is flat HTML (`line_<i>_<field>`) and every button is a
+  submit with an `intent` (`recalculate`, `add-line`, `apply-supplier`, `save`) or a `removeLine`
+  index, so it works with no JavaScript by full-page re-render. After hydration
+  `components/quotes/live-preview-client.ts` debounces changes (500 ms) and posts the same form
+  to `?preview=1` through a React Router fetcher; the returned view is rendered by React into
+  the sticky "True cost" column (no inline scripts or handlers, no `innerHTML`; the bundle is
+  loaded through `<Scripts nonce>`). The route's `shouldRevalidate` skips loader re-runs for
+  previews.
+- **Rate limit.** 60 requests per minute per user (`QUOTE_LIMIT`) on preview, recalculate, save
+  and the detail actions; a 429 carries `Retry-After`. Tariff lookups inside a quote go through
+  the 24-hour cache and do not consume the 10/min tariff bucket; the quick duty check does.
+
+### Saved quotes (snapshots)
+
+- `saveQuote` writes the engine's `QuoteResult` column-for-column onto `Quote`/`QuoteLine`
+  (`quoteData`, `lineData`); `quoteRowToResult` is the inverse and is tested for an exact
+  string round trip on every money column (`routes/quotes.db.test.ts`). `paymentMethod` and
+  `vatPostponed` are snapshotted from the customs profile in force. Lines copy the product's HS
+  code, origin, unit value, currency, weight and volume; the product row is referenced only for
+  its label.
+- Migration `0011_quotes_phase1` adds `quotes.builder_input` (JSONB): the builder's inputs as
+  entered (product ids, quantities, flags, decimal strings, `version: 1`), used only to reopen a
+  draft and to recompute it. It is never read for money. Line order is the builder-input order
+  (`orderedLines`); `quote_lines` has no position column.
+- **Status (§5.9).** The builder saves `DRAFT`. On the detail page: **Update to current catalogue
+  values** (DRAFT stays DRAFT, `recomputeQuote`), **Finalise** (DRAFT → the engine's `READY` or
+  `INDICATIVE`), **Reopen as draft** (INDICATIVE/READY → DRAFT), **Accept** (READY only, roles
+  OWNER/ADMIN via `quote.accept`; sets `acceptedAt`), **Cancel** (any live status; cancelling an
+  accepted quote needs `quote.accept`). Editing is only offered for drafts. After acceptance the
+  database trigger (migration 0002) refuses every change; `quoteDbError` maps its message to a
+  friendly "accepted and can no longer be changed" error and `replaceQuote` refuses before
+  touching the row. `expireDrafts` is the worker's job (not built here).
+- **Audit** (`recordAudit`, ids and statuses only): `quote.create`, `quote.update` (edit, recompute,
+  finalise, reopen — with `from`/`to`), `quote.accept`, `quote.cancel`.
+- **Reference.** `Q-` + the first eight characters of the id, upper-cased (`quoteReference`); see
+  decisions-needed (af) for a per-organisation sequence instead.
+- **Plan limit (M6).** FREE allows `PLAN_LIMITS.FREE.savedQuotes` (3) saved quotes: DRAFT,
+  INDICATIVE, READY and ACCEPTED count (`COUNTED_STATUSES`), CANCELLED and EXPIRED do not. The
+  builder shows `<PlanNotice/>` at the limit and a save is answered with 402 and the notice
+  (recalculating and previewing stay allowed). The number lives only in `PLAN_LIMITS`.
+- **Documents (M5).** The detail page links to `/app/documents/new?quoteId=<id>` and, for accepted
+  quotes, lists the required documents still missing (commercial invoice, packing list).
+
+### Home widgets
+
+- **Recent drafts** link to `/app/quotes/:id/edit`; **New quote** to `/app/quotes/new`.
+- **Quick duty check** (`components/quotes/quick-duty-card.tsx`, `services/quotes/quick-duty.server.ts`):
+  HS code + invoice value (GBP) + origin → the tariff's duty %, anti-dumping %, VAT % and the
+  duty/VAT on that value with the engine's warnings (preference available, ADD, quota…). It posts
+  to Home itself (`/app?index`, `intent=quick-duty`) so it works without JavaScript, and
+  `/app/api/quick-duty` serves the same function as JSON. Same tariff client and 24-hour cache,
+  same 10-per-minute-per-user limit as the HS code field; ambiguous tariffs are reported, never
+  priced at 0%; a 6/8-digit code lists the 10-digit candidates for the user to pick. Nothing is
+  saved. When the tariff service is unreachable the card says so.
+
+### Tests
+
+`validators/quote.test.ts`, `services/quotes/pipeline.server.test.ts` (fixture tariff, sample
+FX, rate sheet v1; multi-currency lines, INDICATIVE on unverified codes, manual FX, DAP without
+breakdown, broker fee terms) and `routes/quotes.db.test.ts` (with `DATABASE_URL`: builder intents
+and preview, the exact snapshot round trip, save/list/detail/Home, edit, RBAC, cross-tenant
+negatives incl. a foreign product id, finalise/accept/reopen/cancel, the immutability trigger
+rendered friendly, recompute on drafts only, the 60/min and 10/min limits, the FREE plan limit,
+the quick duty check and the no-PII log rule).

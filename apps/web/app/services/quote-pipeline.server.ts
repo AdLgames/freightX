@@ -149,9 +149,17 @@ export const resolveBrokerFeeTerms = (
   return { feePct: pct ?? '0', minimumGbp: min ?? '0', usedDefaults };
 };
 
-type TariffStage =
+// M4: exported (and the input narrowed to the fields it reads) so the catalogue quote pipeline
+// (services/quotes/pipeline.server.ts) resolves each line's tariff through this same stage.
+export type TariffStage =
   | { kind: 'CHOICE'; candidates: HsCandidate[] }
   | { kind: 'DONE'; tariff: TariffInput; summary: TariffSummary; note: string };
+
+export type TariffStageInput = Pick<
+  CalculatorInput,
+  'hsCode' | 'manualDuty' | 'manualDutyRatePct' | 'manualVatRatePct' | 'manualAddRatePct'
+>;
+// end M4
 
 const unavailable = (reason: string, code: string, normalisedFrom: string | null): TariffStage => ({
   kind: 'DONE',
@@ -160,8 +168,8 @@ const unavailable = (reason: string, code: string, normalisedFrom: string | null
   note: `Tariff lookup failed: ${reason}`,
 });
 
-const resolveTariffStage = async (
-  input: CalculatorInput,
+export const resolveTariffStage = async (
+  input: TariffStageInput, // M4: was CalculatorInput; same fields read
   deps: PipelineDeps,
 ): Promise<TariffStage> => {
   const entered = input.hsCode;
