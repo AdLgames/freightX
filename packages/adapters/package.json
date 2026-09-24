@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./tracking/core": {
+      "types": "./dist/tracking/core.d.ts",
+      "default": "./dist/tracking/core.js"
+    },
     "./rate-sheets/v1.json": "./rate-sheets/v1.json",
     "./fixtures/fx/hmrc-monthly-sample.csv": "./fixtures/fx/hmrc-monthly-sample.csv"
   },

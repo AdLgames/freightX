@@ -1,0 +1,37 @@
+{
+  "data": {
+    "vessels": {
+      "nodes": [
+        {
+          "staticData": { "name": "EXAMPLE MAERSK", "imo": 9074729 },
+          "lastPositionUpdate": {
+            "latitude": 5.42,
+            "longitude": 80.61,
+            "speed": 17.9,
+            "heading": 292,
+            "course": 291.5,
+            "timestamp": "2026-09-30T04:12:00Z"
+          },
+          "currentVoyage": { "destination": "GB FXT", "eta": "2026-10-28T06:00:00Z" }
+        },
+        {
+          "staticData": { "name": "EXAMPLE DOCKED", "imo": "9362994" },
+          "lastPositionUpdate": {
+            "latitude": 51.95,
+            "longitude": 1.31,
+            "speed": 0,
+            "heading": 511,
+            "course": null,
+            "timestamp": "2026-09-30T04:00:00Z"
+          },
+          "currentVoyage": { "destination": "FELIXSTOWE", "eta": null }
+        },
+        {
+          "staticData": { "name": "NO POSITION", "imo": 9454230 },
+          "lastPositionUpdate": null,
+          "currentVoyage": null
+        }
+      ]
+    }
+  }
+}

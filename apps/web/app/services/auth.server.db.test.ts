@@ -293,6 +293,9 @@ describe.skipIf(!DATABASE_URL)('tenancy-aware loaders (database)', () => {
       expect(shell.nav.map((n) => n.to)).toEqual([
         '/app',
         '/app/quotes',
+        '/app/orders', // M7
+        '/app/bills', // M8
+        '/app/tracking', // M9
         '/app/products',
         '/app/suppliers', // M3
         '/app/documents',

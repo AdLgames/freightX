@@ -419,6 +419,57 @@ Tests: `validators/settings.test.ts`, `services/settings/*.test.ts` (enqueuer, s
 confirmation, the invitation flow incl. expiry/revoke/wrong address, role rules, member removal
 signing out, cross-tenant negatives and the no-PII log snapshot).
 
+## Tracking (M9)
+
+Phase 2 tracking, started early at the founder's request and **read-only**: booking stays gated
+(brief §2). Design: `docs/adr/0017-shipment-tracking-design.md`.
+
+- `/app/tracking` — the organisation's shipments (containers, last milestone, Carrier ETA, status)
+  and the "Track a container" form (reference, container number(s) with ISO 6346 check digit,
+  master bill, origin/destination from the `Port` table, optional quote). Permission
+  `shipment.track` (OWNER/ADMIN/MEMBER); every role may view. Audit `shipment.track` /
+  `shipment.untrack`. List and form work without JavaScript.
+- `/app/tracking/:id` — timeline (`ShipmentEvent`, newest first, no JavaScript needed),
+  containers, vessel card (speed, heading, last position time and source, "Carrier ETA" — the
+  provider's, never ours), the manual-milestone form (source `MANUAL`) and the map.
+- `/app/api/map-state[?shipmentId=]` — JSON, org-scoped through the session, 60/min per user. Per
+  active container: the last real AIS ping (`positionSource`), a server-side dead-reckoned
+  position along the matching shipping lane (`method: lane | heading`, `capped`), the uncertainty
+  radius (2 km + 5 % of distance travelled), `actualPath` (event coordinates + real ping, solid)
+  and `expectedPath` (lane path to the destination, dashed). Extrapolation stops at the poll
+  interval + 2 h and STALE/DOCKED vessels are shown as "last seen". Nothing extrapolated is stored.
+- `POST /webhooks/tracking/:providerId` — brief §6.4: 256 KB limit (413), HMAC verified in the
+  adapter (401), 5-minute replay window (401), malformed 400, unknown provider 404, secret unset
+  503; events go to the BullMQ queue `tracking-events` with `REDIS_URL`, otherwise they are
+  processed inline (logged). React Router's own Origin check does not apply: providers send no
+  `Origin` header.
+
+**Map.** MapLibre GL (basemap, dashed expected route) + deck.gl (`ScatterplotLayer` uncertainty,
+`IconLayer` inline-SVG ship, `PathLayer` actual route), lazy-loaded on the detail route only
+(`components/tracking/tracking-map.tsx` renders a placeholder on the server and imports
+`tracking-map.client.tsx` after hydration — its own chunk). The browser advances the server's
+reckoned position with `app/lib/kinematics-client.ts` (a tested copy of the engine formulas so
+the chunk does not pull in the engine), refetches `/app/api/map-state` every 60 s and glides to
+the new position. Tiles: `MAP_STYLE_URL` (default OpenFreeMap Liberty, keyless); MapTiler or a
+Mapbox style work the same way with their key in the URL — read in the loader, never in client
+code — plus `MAP_TILE_ORIGINS` for extra hosts. The route's `headers()` adds `connect-src` and
+`img-src` for those origins, `img-src data: blob:` and `worker-src blob:` through
+`services/security-headers.server.ts` (`x-harbour-csp-additions`, consumed and removed by
+`applySecurityHeaders`); `script-src` cannot be widened and the global policy is unchanged. If a
+browser reports a `style-src` violation from MapLibre, add it in
+`services/tracking/csp.server.ts`, not globally.
+
+**Providers** (`packages/adapters/src/tracking`, decision (ae)): `TRACKING_MILESTONE_PROVIDER`
+`terminal49 | none` (`TERMINAL49_API_KEY`, `TERMINAL49_WEBHOOK_SECRET`) and
+`TRACKING_POSITION_PROVIDER` `spire | marinetraffic | none` (`SPIRE_API_TOKEN`,
+`MARINETRAFFIC_API_KEY`). All three adapters are shaped on public documentation with
+hand-authored fixtures and every path, header, event name and field marked **TO CONFIRM**; they
+must be checked against the live APIs and a sandbox before being enabled. With `none` the UI says
+"Tracking provider not configured — events can be added manually" and everything else works.
+
+Worker side (`apps/worker`): `vessel-poll` (hourly sweep, per-vessel intervals), `tracking-poll`
+(6-hourly milestone fallback) and `tracking-events` (webhook consumer).
+
 ## Phase 1 TODO (not built — brief §2, §7)
 
 - Auth: passkeys (WebAuthn), optional TOTP.
@@ -536,3 +587,257 @@ member) drives the routes end to end with the recorded tariff fixtures
 SKU uniqueness, archive, unverified save when the fetch fails, VIEWER denied, pickup default
 uniqueness and the payment-terms CHECKs, cross-tenant negatives through the routes, the services
 and raw SQL under RLS, and the no-PII log rule.
+
+## Quotes (M4)
+
+Routes: `/app/quotes` (list, `app.quotes.tsx`), `/app/quotes/new` and `/app/quotes/:id/edit`
+(the builder, `app.quotes_.new.tsx` / `app.quotes_.$id_.edit.tsx`), `/app/quotes/:id` (detail and
+actions, `app.quotes_.$id.tsx`), `POST /app/api/quick-duty` (JSON). Services in
+`app/services/quotes/`, schemas in `app/validators/quote.ts`, components in
+`app/components/quotes/`. Every loader/action starts with `requireOrgContext` and reads tenant
+rows through `withOrg`; every POST carries `<CsrfInput/>`.
+
+### Builder
+
+- **Pipeline.** `services/quotes/pipeline.server.ts` extends the Phase 0 calculator pipeline to
+  catalogue lines: resolveProducts (rows → `productToQuoteLineSnapshot`) → resolveFx (every
+  currency on the quote, one optional manual override) → resolveFreight (rate sheet for the whole
+  shipment) → resolveTariff (once per distinct HS code, through the calculator's exported
+  `resolveTariffStage`) → `computeQuote`. A 6/8-digit product code is never resolved here: the
+  10-digit choice belongs on the product, so the line is marked unavailable and the quote is
+  indicative. Unverified products give `HS_UNVERIFIED` → `INDICATIVE`, as in the calculator.
+- **Inputs.** Supplier (optional; pre-fills the incoterm and the origin port from its default
+  pickup location's `closestPortCode` — duty origin always comes from each product), incoterm
+  radios with plain-English labels, route and mode from the rate-sheet lanes, lines added from
+  the catalogue (quantity, per-line assists and preference claim; HS code, origin, value,
+  currency, weight and volume are read-only with an "Edit product" link), insurance premium,
+  include-origin-fees (FCA/FOB), the supplier's freight breakdown (DAP/DPU), a manual FX rate for
+  one currency, VAT registered / PVA and the duty payment method with broker fee terms — all
+  defaulted from the organisation and its customs profile (`readCustomsProfile`; env defaults
+  `BROKER_DEFERMENT_FEE_PCT`/`_MIN_GBP` when the profile has none).
+- **Progressive enhancement.** The form is flat HTML (`line_<i>_<field>`) and every button is a
+  submit with an `intent` (`recalculate`, `add-line`, `apply-supplier`, `save`) or a `removeLine`
+  index, so it works with no JavaScript by full-page re-render. After hydration
+  `components/quotes/live-preview-client.ts` debounces changes (500 ms) and posts the same form
+  to `?preview=1` through a React Router fetcher; the returned view is rendered by React into
+  the sticky "True cost" column (no inline scripts or handlers, no `innerHTML`; the bundle is
+  loaded through `<Scripts nonce>`). The route's `shouldRevalidate` skips loader re-runs for
+  previews.
+- **Rate limit.** 60 requests per minute per user (`QUOTE_LIMIT`) on preview, recalculate, save
+  and the detail actions; a 429 carries `Retry-After`. Tariff lookups inside a quote go through
+  the 24-hour cache and do not consume the 10/min tariff bucket; the quick duty check does.
+
+### Saved quotes (snapshots)
+
+- `saveQuote` writes the engine's `QuoteResult` column-for-column onto `Quote`/`QuoteLine`
+  (`quoteData`, `lineData`); `quoteRowToResult` is the inverse and is tested for an exact
+  string round trip on every money column (`routes/quotes.db.test.ts`). `paymentMethod` and
+  `vatPostponed` are snapshotted from the customs profile in force. Lines copy the product's HS
+  code, origin, unit value, currency, weight and volume; the product row is referenced only for
+  its label.
+- Migration `0011_quotes_phase1` adds `quotes.builder_input` (JSONB): the builder's inputs as
+  entered (product ids, quantities, flags, decimal strings, `version: 1`), used only to reopen a
+  draft and to recompute it. It is never read for money. Line order is the builder-input order
+  (`orderedLines`); `quote_lines` has no position column.
+- **Status (§5.9).** The builder saves `DRAFT`. On the detail page: **Update to current catalogue
+  values** (DRAFT stays DRAFT, `recomputeQuote`), **Finalise** (DRAFT → the engine's `READY` or
+  `INDICATIVE`), **Reopen as draft** (INDICATIVE/READY → DRAFT), **Accept** (READY only, roles
+  OWNER/ADMIN via `quote.accept`; sets `acceptedAt`), **Cancel** (any live status; cancelling an
+  accepted quote needs `quote.accept`). Editing is only offered for drafts. After acceptance the
+  database trigger (migration 0002) refuses every change; `quoteDbError` maps its message to a
+  friendly "accepted and can no longer be changed" error and `replaceQuote` refuses before
+  touching the row. `expireDrafts` is the worker's job (not built here).
+- **Audit** (`recordAudit`, ids and statuses only): `quote.create`, `quote.update` (edit, recompute,
+  finalise, reopen — with `from`/`to`), `quote.accept`, `quote.cancel`.
+- **Reference.** `Q-` + the first eight characters of the id, upper-cased (`quoteReference`); see
+  decisions-needed (af) for a per-organisation sequence instead.
+- **Plan limit (M6).** FREE allows `PLAN_LIMITS.FREE.savedQuotes` (3) saved quotes: DRAFT,
+  INDICATIVE, READY and ACCEPTED count (`COUNTED_STATUSES`), CANCELLED and EXPIRED do not. The
+  builder shows `<PlanNotice/>` at the limit and a save is answered with 402 and the notice
+  (recalculating and previewing stay allowed). The number lives only in `PLAN_LIMITS`.
+- **Documents (M5).** The detail page links to `/app/documents/new?quoteId=<id>` and, for accepted
+  quotes, lists the required documents still missing (commercial invoice, packing list).
+
+### Home widgets
+
+- **Recent drafts** link to `/app/quotes/:id/edit`; **New quote** to `/app/quotes/new`.
+- **Quick duty check** (`components/quotes/quick-duty-card.tsx`, `services/quotes/quick-duty.server.ts`):
+  HS code + invoice value (GBP) + origin → the tariff's duty %, anti-dumping %, VAT % and the
+  duty/VAT on that value with the engine's warnings (preference available, ADD, quota…). It posts
+  to Home itself (`/app?index`, `intent=quick-duty`) so it works without JavaScript, and
+  `/app/api/quick-duty` serves the same function as JSON. Same tariff client and 24-hour cache,
+  same 10-per-minute-per-user limit as the HS code field; ambiguous tariffs are reported, never
+  priced at 0%; a 6/8-digit code lists the 10-digit candidates for the user to pick. Nothing is
+  saved. When the tariff service is unreachable the card says so.
+
+### Tests
+
+`validators/quote.test.ts`, `services/quotes/pipeline.server.test.ts` (fixture tariff, sample
+FX, rate sheet v1; multi-currency lines, INDICATIVE on unverified codes, manual FX, DAP without
+breakdown, broker fee terms) and `routes/quotes.db.test.ts` (with `DATABASE_URL`: builder intents
+and preview, the exact snapshot round trip, save/list/detail/Home, edit, RBAC, cross-tenant
+negatives incl. a foreign product id, finalise/accept/reopen/cancel, the immutability trigger
+rendered friendly, recompute on drafts only, the 60/min and 10/min limits, the FREE plan limit,
+the quick duty check and the no-PII log rule).
+
+## Orders (M7)
+
+Purchase orders (ADR-0013) record what the organisation agreed to buy and bridge the catalogue
+(M3) and the quote builder (M4). Routes: `/app/orders` (list, `app.orders.tsx`), `/app/orders/new`
+and `/app/orders/:id/edit` (the editor, `app.orders_.new.tsx` / `app.orders_.$id_.edit.tsx`),
+`/app/orders/:id` (detail and actions, `app.orders_.$id.tsx`). Services in `app/services/orders/`
+(`orders.server.ts` persistence, `editor.server.ts` the editor's option lists and no-JS intents,
+`freight-quote.server.ts` the builder pre-fill, `schedule.ts` the pure money rules), schemas in
+`app/validators/order.ts`, components in `app/components/orders/`. Permissions: `order.view`
+(every role), `order.edit` (MEMBER and up: create, edit drafts, status moves, payment dates,
+cancel a draft), `order.issue` (OWNER/ADMIN: issue, and cancel an issued order).
+
+### Editor
+
+- Supplier (its default currency, incoterm and default pickup location are applied with
+  **Use supplier defaults** or `?supplier=<id>`), pickup location (must belong to the supplier —
+  a three-column foreign key backs this up), currency, incoterm, expected ship month
+  (`YYYY-MM`, stored as the first of the month), notes and the lines: product, quantity, unit
+  cost in the PO currency. **Add from catalogue** defaults the unit cost to the product's
+  catalogue value; a product priced in another currency is refused rather than converted
+  (change the order currency or the product). The form is flat HTML (`item_<i>_<field>`) with
+  `intent` buttons (`recalculate`, `add-item`, `remove-item`, `apply-supplier`, `save`), so it
+  works without JavaScript. Line totals are `round2(quantity × unit cost)`; the goods total is
+  their sum (`orderTotals`).
+- **Numbering.** `PO-YYYY-NNN` per organisation and UTC year, allocated inside the create
+  transaction from `po_counters` (one upsert with `RETURNING`, so two parallel creates never
+  share a number; a rolled-back create leaves a gap). The number is editable while DRAFT
+  (`PO-YYYY-NNN` form, unique per organisation). See decisions-needed (ag).
+- Purchase orders are not plan-gated (`PLAN_LIMITS` has no slot for them).
+
+### Issue, freeze and the payment schedule
+
+- **Issue** (DRAFT → ISSUED) freezes the goods total and computes the payment schedule from the
+  supplier's `PaymentTerms` at that moment (`paymentSchedule`): PREPAID → deposit 100% due on
+  issue; NET → no deposit, balance due `issuedAt + netDays`; DEPOSIT_BALANCE → deposit
+  `round2(total × pct / 100)` due on issue, balance the remainder (never a second rounding, so
+  the database CHECK `deposit + balance = total` holds), `balanceTrigger` copied and the balance
+  due date set when the trigger event is recorded (ON_SHIPMENT: when the order is marked
+  shipped). Issuing needs at least one line and payment terms on the supplier — terms are never
+  invented for money.
+- Once issued, migration 0012's triggers allow only status, the payment dates and notes to
+  change; lines cannot be added, changed or removed. The editor redirects to the detail page,
+  `updateOrder` answers `FROZEN` before touching the row, and a direct write is refused by the
+  database (`orderDbError` renders it as the same friendly message).
+- **Status** moves follow the ADR-0013 table (ISSUED → IN_PRODUCTION → READY_TO_SHIP →
+  SHIPPED → CLOSED, production skippable; anything but CLOSED/CANCELLED → CANCELLED), checked
+  in code (`canTransition`) and by the trigger. Payment is not a status.
+- **Payments.** Until the payments partner is connected (ADR-0016) the user records the deposit
+  and the balance as paid with a calendar date; the same fields will be set by the partner's
+  webhook later. Home shows the next three unpaid deposits/balances of open orders, soonest due
+  first, amounts in the PO currency and never converted (`listPaymentsDue`, `paymentsDue`).
+- **Audit** (`recordAudit`, ids, statuses, enum values and dates only — never amounts):
+  `order.create`, `order.update`, `order.issue`, `order.status`, `order.cancel`,
+  `order.payment` (kind and date).
+
+### Get freight quote
+
+`/app/quotes/new?po=<id>` pre-fills the M4 builder from the order (`builderValuesFromOrder`):
+the lines at the PO quantities with the PO unit cost and currency as hidden per-line fields
+(`line_<i>_unitCost` / `line_<i>_currency`, honoured by the pipeline instead of the catalogue
+value), the supplier, the incoterm and the route whose origin is the pickup location's port.
+The saved quote carries `purchaseOrderId` (composite FK keeps it in-tenant); several quotes may
+price one order but at most one can be ACCEPTED (partial unique index
+`quotes_one_accepted_per_po`; the route answers `PO_QUOTE_ACCEPTED`). A quote cannot be attached
+to a cancelled or closed order. FX uses the current HMRC month, and the builder notes it when the
+order's expected ship month is later.
+
+### Tests
+
+`validators/order.test.ts`, `services/orders/schedule.test.ts` (totals, the three schedules,
+the remainder rule, `paymentsDue` ordering) and `routes/orders.db.test.ts` (with `DATABASE_URL`:
+editor intents and catalogue/currency/tenant refusals, `PO-YYYY-001/002` per organisation with
+two parallel creates, create/update totals and renumbering, issue for the three term types with
+the frozen figures, the 0012 triggers rendered friendly, the status walk and illegal
+transitions, payments by date and the Home card, `?po=` pre-fill, the saved quote's
+`purchaseOrderId` and the one-accepted-quote rule, RBAC, cross-tenant negatives and the no-PII
+log rule).
+
+## Bills and variance (M8)
+
+Actual costs as an accounts-payable sub-ledger (ADR-0014). Routes: `/app/bills` (list,
+`app.bills.tsx`), `/app/bills/new` and `/app/bills/:id/edit` (the editor, `app.bills_.new.tsx` /
+`app.bills_.$id_.edit.tsx`), `/app/bills/:id` (detail, posting, payments, `app.bills_.$id.tsx`),
+`/app/orders/:id/costs` (costs and variance for one purchase order, `app.orders_.$id_.costs.tsx`).
+Services in `app/services/bills/` (`bills.server.ts` persistence, `editor.server.ts` the editor's
+option lists and no-JS intents, `variance.server.ts` the costs page, pure `actuals.ts` the
+ledger-to-engine glue and `totals.ts` the running total), schemas in `app/validators/bill.ts`,
+components in `app/components/bills/`. Permissions: `bill.view` (every role), `bill.edit` (MEMBER
+and up: record and edit drafts, record or remove payments, delete drafts), `bill.post` (OWNER/
+ADMIN: post — the bill becomes a financial record).
+
+### Bills
+
+- **A bill is one vendor document**: vendor type (a supplier from the list, or a named forwarder,
+  customs broker, HMRC or other), kind (supplier invoice, freight invoice, customs charges, HMRC
+  statement, other), the vendor's reference, currency, total, issue and due dates, notes, and
+  **lines**: each booked to a purchase order (and optionally one of its lines, when the cost
+  belongs to that SKU) under a cost category that maps one-to-one onto the engine's
+  `COST_CATEGORIES` (so every variance is a direct subtraction). Unplanned costs say why
+  (demurrage, detention, storage, examination, other). A line may be negative (a discount);
+  the total may not — a **credit note** is flagged instead and its lines reduce the actuals.
+- **Reference rule.** The same reference from the same vendor is refused (partial unique indexes
+  in migration 0013: per supplier, and per case-insensitive vendor name). Catches the same invoice
+  keyed in twice.
+- **Posting** (DRAFT → POSTED, `bill.post`) needs at least one line and lines that add up to the
+  total exactly; the page says what is off, the route refuses with the two amounts, and the
+  trigger is the backstop. Posted bills are frozen (status, paid date, document and notes aside)
+  and so are their lines; corrections are credit notes. Drafts can be edited and deleted.
+- **Payments** are recorded on posted bills only: date, amount in the bill currency and the
+  rate the bank actually applied (GBP per unit; forced to 1 for GBP bills). The GBP amount is
+  computed, never typed, so the ledger reconciles with the statement. A payment past the
+  outstanding amount is refused; when the payments cover the total the bill is PAID (paid on the
+  last payment's date); removing a payment reopens it as POSTED. Payment rows are append-only
+  (no UPDATE — delete and record again; both audited).
+- **Audit** (`recordAudit`, ids, statuses, enum values, counts and dates only — never amounts):
+  `bill.create`, `bill.update`, `bill.post`, `bill.delete`, `bill.payment`,
+  `bill.payment_removed`.
+- The editor is flat HTML (`line_<i>_<field>`) with `intent` buttons (`recalculate`, `add-line`,
+  `save`) or a `removeLine` index, so it works without JavaScript; `?order=<id>` starts a
+  supplier bill from a purchase order. Bills are not plan-gated.
+
+### Costs and variance
+
+`/app/orders/:id/costs` recomputes on every view — nothing is stored:
+
+- **Estimate** = the order's accepted quote (`quoteRowToResult`), per line and per category
+  (`estimateFromQuoteLine`: goods, assists, freight to/after the border, origin and destination
+  fees, insurance, duty, import VAT, deferment fee; the platform fee sits in OTHER; clearance and
+  unplanned are never estimated; the inland VAT-base adjustment is not a cost and is left out).
+- **Actuals** = the posted bills with a line on the order, converted to GBP by `billsToActuals`
+  (ADR-0014 "exchange rates live on payments"): a GBP bill is its total; the paid part of a
+  foreign-currency bill is the sum of the payments' GBP amounts; the unpaid remainder is converted
+  at today's HMRC monthly rate (ECB as fallback, then the quote's own snapshot rate) and **marked
+  as an estimate**; with no rate at all the bill is left out with a warning rather than guessed.
+  The bill's GBP total is split across its lines by largest remainder in proportion to the line
+  amounts, so lines add up to the bill to the penny; a credit note reverses the sign. Only the
+  order's own lines count (one forwarder invoice may span two orders).
+- **Maths** = the engine's `absorbActuals` (`packages/engine/src/actuals.ts`, golden-tested):
+  variance by category (positive = unfavourable), missing categories (estimated, no bill yet),
+  actual landed cost per SKU with the biggest drivers, shared costs apportioned the way the quote
+  did (physical costs by chargeable weight, duty by customs value, insurance and goods by value),
+  import VAT excluded from landed cost only when it is recoverable.
+- Without an accepted quote the page shows the actuals by category and says variance needs one.
+  The purchase order page links here ("Costs and variance") and to "Record a bill".
+
+### Not in this slice
+
+Attaching the invoice from the vault to a bill (`Bill.documentId` exists, no UI), a Home widget
+for actuals completeness, the "split an HMRC statement across orders" helper (ADR-0014
+consequences), and the Xero/QuickBooks export.
+
+### Tests
+
+`validators/bill.test.ts`, `services/bills/actuals.test.ts` (GBP conversion by payments, HMRC /
+quote fallbacks, largest-remainder split, discounts and credit notes, the category mapping) and
+`routes/bills.db.test.ts` (with `DATABASE_URL`: the editor and its refusals incl. foreign and
+cancelled orders and an item of another order, drafts, the reference rule, posting balanced and
+unbalanced with the trigger backstop, the frozen rules, payments incl. GBP at rate 1 / overpayment
+/ append-only / settle and reopen, the costs page against an accepted quote with FX from payments,
+a netted credit note and demurrage landing on the bulky SKU, an order without a quote, a bill
+spanning two orders, RBAC, cross-tenant negatives and the no-PII log rule).

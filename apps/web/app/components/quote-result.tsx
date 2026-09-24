@@ -5,14 +5,16 @@ import { count, gbp, isZeroAmount, isoDateTime, pad2, pct } from './format';
 
 export type QuoteOutcome = Extract<PipelineOutcome, { kind: 'QUOTE' }>;
 
-const FX_SOURCE_LABEL: Record<string, string> = {
+export const FX_SOURCE_LABEL: Record<string, string> = {
+  // M4: exported for components/quotes
   HMRC_MONTHLY: 'HMRC monthly rate',
   ECB: 'ECB daily reference rate (fallback)',
   MANUAL: 'entered manually',
 };
 
 /** Plain-English explanations shown alongside the engine's message for newer warnings. */
-const WARNING_EXPLAINED: Partial<Record<WarningCode, string>> = {
+export const WARNING_EXPLAINED: Partial<Record<WarningCode, string>> = {
+  // M4: exported
   ASSISTS_INCLUDED:
     'Tooling, moulds or design you paid for separately count towards the customs value, so duty and import VAT are charged on them too.',
   PVA_REQUIRES_VAT_REGISTRATION:
@@ -26,7 +28,8 @@ const WARNING_EXPLAINED: Partial<Record<WarningCode, string>> = {
 export const DAN_REMINDER =
   'Under CDS your forwarder cannot use your DAN until you add their EORI in your CDS account authorisations.';
 
-function StatusBanner({
+export function StatusBanner({
+  // M4: exported
   status,
   warnings,
 }: {
@@ -64,7 +67,15 @@ function StatusBanner({
   );
 }
 
-function Row({ label, value, total = false }: { label: string; value: string; total?: boolean }) {
+export function Row({
+  label,
+  value,
+  total = false,
+}: {
+  label: string;
+  value: string;
+  total?: boolean;
+}) {
   return (
     <tr className={total ? 'total' : undefined}>
       <th scope="row">{label}</th>

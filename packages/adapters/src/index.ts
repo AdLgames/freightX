@@ -15,3 +15,5 @@ export * from './storage/index.js'; // M5: object storage, document formats, mal
 // M2 — settings: Companies House lookup (ADR-0015) and HMRC identity checks (§5.6).
 export * from './companies-house/index.js';
 export * from './hmrc/index.js';
+// M9 — shipment tracking (ADR-0017)
+export * from './tracking/index.js';

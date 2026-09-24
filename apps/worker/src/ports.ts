@@ -87,7 +87,8 @@ export type AlertCode =
   // end M6
   // M5: document-scan job — a scanner rejected an upload (warning; the object is already deleted)
   | 'DOCUMENT_MALWARE_FOUND'
-  | 'IDENTITY_VERIFY_REPEATED_ERROR'; // M2: eori-verify / vat-verify hit ERROR 3× in a row for one org
+  | 'IDENTITY_VERIFY_REPEATED_ERROR' // M2: eori-verify / vat-verify hit ERROR 3× in a row for one org
+  | 'TRACKING_POSITION_STALE'; // M9 (ADR-0017): a vessel failed 3 consecutive position polls
 
 export interface AlertSink {
   alert(

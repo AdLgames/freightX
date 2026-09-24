@@ -14,6 +14,8 @@ prisma/migrations/0004_auth_sessions         generated: index on magic_link_toke
 prisma/migrations/0005_documents_quote_link  M5: generated DDL (quote link, scope, scan columns) + hand-written CHECKs
 prisma/migrations/0008_org_identity_and_encryption
                                              M2: generated DDL + hand-written CHECKs/RLS (invitations)
+prisma/migrations/0010_tracking              M9: generated DDL + hand-written CHECKs/RLS/grants/Port seed
+src/tracking.ts   PrismaTrackingStore, PrismaVesselPollStore, withTrackingLookup(), withTrackingSweep()
 src/client.ts     createPrismaClient()       one pool per process
 src/tenancy.ts    forOrganization(), withOrgTransaction(), scopeArgs()
 src/rbac.ts       can(role, action), assertCan()
@@ -106,6 +108,41 @@ Every PR that touches `prisma/migrations` ends its description with:
 Additive migrations (new nullable column, new table, new enum value) roll back by re-deploying the
 previous release. Destructive ones (drop/rename column, narrowing type) need the snapshot ID and
 the explicit down SQL before review.
+
+## Shipment tracking (migration 0010, M9 — ADR-0017)
+
+Generated with `prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel
+prisma/schema.prisma --shadow-database-url <shadow> --script` (part 1) plus hand-written,
+idempotent CHECKs, policies, grants and the `Port` seed (part 2). Additive; rollback note in the
+file.
+
+- `Container` (`containers`, tenant table, RLS + composite FK to `shipments(id, organization_id)`):
+  ISO 6346 number (check digit validated in code, format CHECK in the DB), `sizeType`
+  (`C20GP|C40GP|C40HC|C45HC` — Prisma enum values cannot start with a digit), vessel, last milestone.
+- `Shipment.quoteId` is now **nullable** (unique index kept; a container can be tracked before any
+  quote exists) plus `reference`, `masterBillNumber`, `originLocode`, `destinationLocode`,
+  `trackingProvider`, `trackingRequestRef`, `trackingSubscribedAt`.
+- `ShipmentEvent` gains `containerId` (composite FK), `locationLocode/Name`, `latitude`/`longitude`
+  (`Decimal(9,6)` — coordinates, not money), `vesselImo`, `payloadSha256`. The idempotency key is
+  now **`(organizationId, source, providerEventId)`**: one provider event fans out to every tenant
+  tracking that container number. Still append-only.
+- `ActiveVessel` (`active_vessels`) and `Port` (`ports`) are shared, non-tenant tables
+  (`PASSTHROUGH_MODELS`): one AIS poll per ship serves every organisation. `ports` is seeded with the
+  rate-sheet ports plus SGSIN, MYPKG, LKCMB, AEJEA, EGSUZ, EGPSD, NLRTM, BEANR, DEHAM (approximate
+  coordinates, ±0.01°, for distance calculations only) and is read-only for the app role.
+- **Narrow cross-tenant reads** (the only ones in the codebase): a webhook names a container number,
+  not an organisation, so `withTrackingLookup` sets `app.tracking_container = <number>` and the
+  policy `containers_tracking_lookup` exposes exactly the rows with that number; then every write
+  runs per organisation inside `withOrgTransaction`. The 6-hourly poll fallback uses
+  `withTrackingSweep` (`app.tracking_sweep = 'on'`) to list subscribed shipments across
+  organisations. Neither setting is used anywhere else.
+- **TODO — app/worker role split.** ADR-0017 says only the worker writes `active_vessels` and only
+  the worker runs cross-organisation sweeps. Until a `harbour_worker` role exists, `harbour_app`
+  holds `INSERT, UPDATE` on `active_vessels` (no `DELETE`) and the `*_tracking_sweep` policies bind
+  every role. When the role is created: `REVOKE INSERT, UPDATE ON active_vessels FROM harbour_app`,
+  grant them to the worker role, and add `TO harbour_worker` to the two sweep policies.
+- Tests: `test/tracking.db.test.ts` (fan-out to A and B but never C, duplicates, kill switch,
+  lookup policy, sweep, append-only), `test/migrations.test.ts` (0010 block).
 
 ## Tenancy contract
 
@@ -368,6 +405,90 @@ relies on that.
 * Enums are additive only, as everywhere. `test/migrations.test.ts` checks the DDL shape, the
   backfill, the CHECKs, the partial index, the policies, the grants and idempotency;
   `apps/web/app/routes/catalogue.db.test.ts` exercises the constraints and RLS against a database.
+
+## Purchase orders (migration 0012, M7, ADR-0013)
+
+`0012_purchase_orders` = generated DDL (part 1) + hand-written, idempotent rules (part 2);
+additive, rollback note in the file.
+
+- Enum `purchase_order_status` (`DRAFT`, `ISSUED`, `IN_PRODUCTION`, `READY_TO_SHIP`, `SHIPPED`,
+  `CLOSED`, `CANCELLED`; additive only). Payment and transit are not statuses.
+- New tenant tables (denormalised `organization_id`, RLS `ENABLE` + `FORCE`, `<table>_tenant`
+  policy, grants to `harbour_app`, all in `TENANT_MODELS`/`TENANT_TABLES`):
+  - `purchase_orders` — composite FKs `(supplier_id, organization_id) → suppliers` and the
+    three-column `(pickup_location_id, supplier_id, organization_id) → pickup_locations`, so a
+    pickup location always belongs to the order's supplier and tenant (the target unique index
+    on `pickup_locations` is added here). CHECKs: `po_number ~ '^PO-[0-9]{4}-[0-9]{3,}$'`
+    (unique per organisation), currency format, `deposit_pct` in [0, 100], non-negative
+    amounts, `deposit_amount + balance_amount = total_goods_value` when both are set, an
+    `issued_at` for every status but DRAFT/CANCELLED, `expected_ship_month` on the first of a
+    month.
+  - `purchase_order_items` — `(purchase_order_id, organization_id)` → orders `ON DELETE
+CASCADE`, `(product_id, organization_id)` → products; `quantity > 0`, money non-negative.
+  - `po_counters` — one row per organisation and year (`next` = the next NNN). The app allocates
+    a number inside the create transaction with `INSERT … ON CONFLICT (organization_id, year) DO
+UPDATE SET next = next + 1 RETURNING next - 1`; the row lock serialises concurrent creates,
+    a rolled-back create leaves a gap.
+- `quotes.purchase_order_id` (nullable) with a composite FK to `purchase_orders` `ON DELETE
+RESTRICT`, and the partial unique index `quotes_one_accepted_per_po` (`purchase_order_id WHERE
+status = 'ACCEPTED'`): several quotes may price one order, at most one is accepted. The app maps
+  the `P2002` from an `UPDATE` of `quotes` to `PO_QUOTE_ACCEPTED`.
+- Trigger `purchase_orders_guard` (`BEFORE UPDATE OR DELETE`): checks every status change against
+  the ADR-0013 transition table; once the row is not DRAFT only `status`, `deposit_due_at`,
+  `deposit_paid_at`, `balance_due_at`, `balance_paid_at`, `notes` and `updated_at` may change
+  (same `to_jsonb` technique as the accepted-quote trigger, so future columns are protected
+  automatically); `DELETE` is allowed for DRAFT only (cancel instead). Trigger
+  `purchase_order_items_frozen` refuses `INSERT`/`UPDATE`/`DELETE` on the items of a non-DRAFT
+  order, reading the parent under the caller's RLS. Error messages are prefixed `harbour:` and
+  contain the PO number and status, never amounts; `apps/web` maps them to `FROZEN` /
+  `ILLEGAL_TRANSITION`.
+- Hard-deleting an organisation (§7.3 maintenance job) must disable both triggers for its run,
+  as `apps/web/app/routes/orders.db.test.ts` does in its superuser cleanup.
+- `test/migrations.test.ts` checks the DDL shape, the CHECKs, the partial index, the triggers,
+  the policies, the grants and idempotency; `apps/web/app/routes/orders.db.test.ts` exercises the
+  numbering, the freeze, the transitions, the one-accepted-quote rule and RLS against a database.
+
+## Bills (migration 0013, M8, ADR-0014)
+
+`0013_bills` = generated DDL (part 1) + hand-written, idempotent rules (part 2); additive,
+rollback note in the file. Actual costs as an accounts-payable sub-ledger.
+
+- Enums (additive only): `vendor_type` (`SUPPLIER`, `FORWARDER`, `CUSTOMS_BROKER`, `HMRC`,
+  `OTHER`), `bill_type` (`SUPPLIER_INVOICE`, `FREIGHT_INVOICE`, `CUSTOMS_CHARGES`,
+  `CUSTOMS_STATEMENT`, `OTHER`), `bill_status` (`DRAFT`, `POSTED`, `PAID`), `cost_category`
+  (one-to-one with the engine's `COST_CATEGORIES`), `unplanned_reason`.
+- New tenant tables (denormalised `organization_id`, RLS `ENABLE` + `FORCE`, `<table>_tenant`
+  policy, grants to `harbour_app`, all in `TENANT_MODELS`/`TENANT_TABLES`):
+  - `bills` — composite FKs `(supplier_id, organization_id) → suppliers` and
+    `(document_id, organization_id) → documents` (the invoice in the vault; the target unique index
+    on `documents` is added here). CHECKs: currency format, `total_amount >= 0` (credit notes are
+    flagged with `is_credit_note`, never negative), a non-blank reference, `SUPPLIER` bills name a
+    supplier row and every other vendor a `vendor_name`, the status agrees with `posted_at` /
+    `paid_at`, `due_on >= issued_on`. Partial unique indexes `bills_one_reference_per_supplier`
+    and `bills_one_reference_per_vendor` (`lower(vendor_name)`): a vendor's reference is unique in
+    the organisation.
+  - `bill_lines` — `(bill_id, organization_id)` → bills `ON DELETE CASCADE`,
+    `(purchase_order_id, organization_id)` → purchase_orders `ON DELETE RESTRICT`, and the
+    three-column `(purchase_order_item_id, purchase_order_id, organization_id)` →
+    purchase_order_items (target unique index added here), so a line's item always belongs to the
+    line's order and tenant. `amount` may be negative (a discount line); `unplanned_reason` is set
+    iff `cost_category = 'UNPLANNED'`.
+  - `bill_payments` — `(bill_id, organization_id)` → bills `ON DELETE CASCADE`; `amount > 0`,
+    `fx_rate > 0` (GBP per 1 unit of the bill currency, as paid), `amount_gbp >= 0`.
+- Trigger `bills_guard` (`BEFORE UPDATE OR DELETE`): transitions `DRAFT>POSTED`, `POSTED>PAID`,
+  `PAID>POSTED`; `DRAFT>POSTED` requires at least one line and `sum(bill_lines.amount) =
+total_amount`; once not DRAFT only `status`, `paid_at`, `document_id`, `notes` and `updated_at`
+  may change (same `to_jsonb` technique as 0002/0012); `DELETE` for DRAFT only. Trigger
+  `bill_lines_frozen`: no `INSERT`/`UPDATE`/`DELETE` on the lines of a posted bill. Trigger
+  `bill_payments_guard`: `INSERT` only when the bill is POSTED or PAID, `UPDATE` never
+  (append-only), `DELETE` allowed. Error messages are prefixed `harbour:` and carry the reference
+  and status (the posting check quotes the two totals); `apps/web` maps them to `NOT_BALANCED`,
+  `NO_LINES`, `FROZEN`, `ILLEGAL_TRANSITION`, `WRONG_STATUS`.
+- Hard-deleting an organisation (§7.3 maintenance job) must disable the three triggers for its
+  run, as `apps/web/app/routes/bills.db.test.ts` does in its superuser cleanup.
+- `test/migrations.test.ts` checks the DDL shape, the CHECKs, the partial indexes, the triggers,
+  the policies, the grants and idempotency; `apps/web/app/routes/bills.db.test.ts` exercises
+  posting, the freeze, payments and RLS against a database.
 
 ## Field encryption (M2, §7.3)
 

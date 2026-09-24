@@ -1,10 +1,21 @@
 import { AlertCircle, ArrowRight, Map as MapIcon, Plus } from 'lucide-react';
-import { Link } from 'react-router';
+import { Link, data } from 'react-router';
 import type { Route } from './+types/app._index';
 import { gbp } from '../components/format';
 import { modeName, portName } from '../data/ports';
 import { requireOrgContext, withOrg } from '../services/auth.server';
 import { homeActions, homeStats, startOfMonthUtc, type RecentDraft } from '../services/home.server';
+// M4
+import { QuickDutyCard } from '../components/quotes/quick-duty-card';
+import { requireCsrf } from '../services/csrf.server';
+import { runQuickDuty, type QuickDutyResult } from '../services/quotes/quick-duty.server';
+import { readForm } from '../services/request.server';
+import { QUICK_DUTY_FIELDS } from '../validators/quote';
+// end M4
+// M7
+import { PaymentsDueCard } from '../components/orders/payments-due-card';
+import { listPaymentsDue } from '../services/orders/orders.server';
+// end M7
 
 /**
  * Workspace Home, the "Command Center" (docs/design-system.md). M1: the action-required banner.
@@ -25,6 +36,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
     const customsProfile = await tx.customsProfile.findFirst({
       select: { paymentMethod: true, cdsAuthorityGranted: true },
     });
+    const paymentsDue = await listPaymentsDue(tx, 3); // M7
     const [activeShipments, monthQuotes, draftQuotes, drafts] = await Promise.all([
       tx.shipment.count({ where: { status: { notIn: ['DELIVERED', 'CANCELLED'] } } }),
       tx.quote.findMany({
@@ -49,6 +61,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
     ]);
     return {
       actionsInput: { eoriNumber: org?.eoriNumber ?? null, customsProfile },
+      paymentsDue, // M7
       stats: homeStats({
         activeShipments,
         monthQuoteTotals: monthQuotes.map((q) => q.totalLandedCostExVat.toString()),
@@ -74,6 +87,46 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
   };
 };
 
+// M4: the quick duty check posts to Home itself (`intent=quick-duty`) so it works without
+// JavaScript; the same check is served as JSON by /app/api/quick-duty. Nothing is saved.
+export interface HomeActionData {
+  quickDuty: {
+    values: Record<string, string>;
+    errors: Record<string, string>;
+    result: QuickDutyResult | null;
+  };
+}
+
+export const action = async ({ request }: Route.ActionArgs) => {
+  const ctx = await requireOrgContext(request);
+  const form = await readForm(request);
+  await requireCsrf(request, form, ctx.session);
+  const values: Record<string, string> = {};
+  for (const f of QUICK_DUTY_FIELDS) {
+    const v = form?.get(f);
+    if (typeof v === 'string') values[f] = v.slice(0, 200);
+  }
+  if (form?.get('intent') !== 'quick-duty') {
+    return data<HomeActionData>(
+      { quickDuty: { values, errors: {}, result: null } },
+      { status: 400 },
+    );
+  }
+  const result = await runQuickDuty(ctx, request, values);
+  const status = result.kind === 'invalid' ? 400 : result.kind === 'rate-limited' ? 429 : 200;
+  return data<HomeActionData>(
+    {
+      quickDuty: {
+        values,
+        errors: result.kind === 'invalid' ? result.errors : {},
+        result: result.kind === 'invalid' ? null : result,
+      },
+    },
+    { status },
+  );
+};
+// end M4
+
 const relativeTime = (iso: string, now = Date.now()): string => {
   const ms = now - new Date(iso).getTime();
   const hours = Math.floor(ms / 3_600_000);
@@ -83,8 +136,9 @@ const relativeTime = (iso: string, now = Date.now()): string => {
   return days === 1 ? 'yesterday' : `${days} days ago`;
 };
 
-export default function WorkspaceHome({ loaderData }: Route.ComponentProps) {
-  const { orgName, actions, stats, drafts } = loaderData;
+export default function WorkspaceHome({ loaderData, actionData }: Route.ComponentProps) {
+  const { orgName, actions, stats, drafts, paymentsDue } = loaderData; // M7: paymentsDue
+  const quickDuty = actionData?.quickDuty ?? null; // M4
   return (
     <>
       <div className="page-head">
@@ -92,7 +146,7 @@ export default function WorkspaceHome({ loaderData }: Route.ComponentProps) {
           <h1>Command Center</h1>
           <p className="muted">{orgName}</p>
         </div>
-        <Link to="/app/quotes" className="button lime">
+        <Link to="/app/quotes/new" className="button lime">
           <Plus className="icon" aria-hidden="true" /> New quote
         </Link>
       </div>
@@ -148,13 +202,13 @@ export default function WorkspaceHome({ loaderData }: Route.ComponentProps) {
           <h2 id="drafts-title">Recent drafts</h2>
           {drafts.length === 0 ? (
             <p className="muted">
-              No draft quotes yet. <Link to="/app/quotes">Start one</Link>.
+              No draft quotes yet. <Link to="/app/quotes/new">Start one</Link>.
             </p>
           ) : (
             <ul className="draft-list">
               {drafts.map((d) => (
                 <li key={d.id}>
-                  <Link to={`/app/quotes/${d.id}`} className="draft-row">
+                  <Link to={`/app/quotes/${d.id}/edit`} className="draft-row">
                     <span>
                       <span className="draft-route">{d.route}</span>
                       <span className="muted small">
@@ -171,6 +225,17 @@ export default function WorkspaceHome({ loaderData }: Route.ComponentProps) {
             </ul>
           )}
         </section>
+
+        {/* M4 */}
+        <QuickDutyCard
+          values={quickDuty?.values ?? {}}
+          errors={quickDuty?.errors ?? {}}
+          result={quickDuty?.result ?? null}
+        />
+        {/* end M4 */}
+        {/* M7 */}
+        <PaymentsDueCard payments={paymentsDue} />
+        {/* end M7 */}
       </div>
     </>
   );

@@ -69,6 +69,23 @@ import {
   type StripeEventSummary,
 } from './jobs/stripe-events.js';
 // end M6
+// M9 (ADR-0017): tracking jobs and their Prisma-backed stores (only when DATABASE_URL is set).
+import { createMilestoneProvider, createPositionProvider } from '@harbour/adapters';
+import {
+  PrismaTrackingStore,
+  PrismaVesselPollStore,
+  withOrgTransaction,
+  withTrackingSweep,
+  type PrismaClient,
+} from '@harbour/db';
+import { log as workerLog } from './log.js';
+import {
+  runTrackingEvents,
+  runTrackingPoll,
+  type TrackingEventsSummary,
+  type TrackingPollSummary,
+} from './jobs/tracking-events.js';
+import { runVesselPoll, type VesselPollSummary } from './jobs/vessel-poll.js';
 
 const csvList = z
   .string()
@@ -101,6 +118,12 @@ export const envSchema = z.object({
   // (DATABASE_URL is declared above with M5.)
   FIELD_ENCRYPTION_KEY: z.string().min(1).optional(),
   HMRC_API_BASE_URL: z.url().optional(),
+  // M9 (ADR-0017). Unset DATABASE_URL (declared above) → the tracking jobs log and exit; keys are never logged.
+  TRACKING_MILESTONE_PROVIDER: z.enum(['terminal49', 'none']).default('none'),
+  TRACKING_POSITION_PROVIDER: z.enum(['spire', 'marinetraffic', 'none']).default('none'),
+  TERMINAL49_API_KEY: z.string().min(1).optional(),
+  SPIRE_API_TOKEN: z.string().min(1).optional(),
+  MARINETRAFFIC_API_KEY: z.string().min(1).optional(),
 });
 export type WorkerEnv = z.infer<typeof envSchema>;
 
@@ -131,7 +154,10 @@ export type JobSummary =
   | TariffRefreshSummary
   | QuoteExpirySummary
   | DocumentScanSummary // M5
-  | IdentityVerifySummary; // M2
+  | IdentityVerifySummary // M2
+  | VesselPollSummary // M9
+  | TrackingEventsSummary // M9
+  | TrackingPollSummary; // M9
 
 // M5: builds the document-scan port from the environment, or explains what is missing.
 export type DocumentScanWiring = { port: DocumentScanPort } | { missing: string[] };
@@ -215,6 +241,20 @@ export const buildWiring = (
   const eoriChecker = new HmrcEoriChecker({ fetch: fetchImpl, now, ...hmrcBase });
   const vatChecker = new HmrcVatChecker({ fetch: fetchImpl, now, ...hmrcBase });
   const identityErrors = new RepeatedErrorTracker();
+  // M9 (ADR-0017): tracking providers and stores. One Prisma pool per process, only with a
+  // DATABASE_URL. The worker uses the same DB role as the app for now (packages/db README "0010").
+  const prisma: PrismaClient | null = env.DATABASE_URL
+    ? createPrismaClient({ databaseUrl: env.DATABASE_URL, log: ['warn', 'error'] })
+    : null;
+  const trackingStore = prisma ? new PrismaTrackingStore(prisma) : null;
+  const vesselStore = prisma ? new PrismaVesselPollStore(prisma) : null;
+  const milestoneProvider = createMilestoneProvider(env, { now });
+  const positionProvider = createPositionProvider(env);
+  const trackingLog = {
+    info: (event: string, fields?: Record<string, unknown>) => workerLog(event, fields),
+    warn: (event: string, fields?: Record<string, unknown>) =>
+      workerLog(event, { level: 'warn', ...fields }),
+  };
 
   const runJob = async (queue: QueueName, data?: unknown): Promise<JobSummary> => {
     switch (queue) {
@@ -244,6 +284,48 @@ export const buildWiring = (
           now,
           alerts,
           errors: identityErrors,
+        });
+      // M9
+      case 'vessel-poll':
+        if (!vesselStore) {
+          workerLog('vessel_poll.no_database', {});
+          return {
+            provider: positionProvider.name,
+            due: 0,
+            polled: 0,
+            updated: 0,
+            missing: 0,
+            failed: 0,
+            stale: 0,
+            skipped: 'NOT_CONFIGURED',
+            asOf: now().toISOString(),
+          };
+        }
+        return runVesselPoll({
+          provider: positionProvider,
+          store: vesselStore,
+          alerts,
+          now,
+          log: workerLog,
+        });
+      case 'tracking-events':
+        return runTrackingEvents({ store: trackingStore, now, log: trackingLog }, data);
+      case 'tracking-poll':
+        return runTrackingPoll({
+          store: trackingStore,
+          provider: milestoneProvider,
+          now,
+          log: trackingLog,
+          listDue: (input) => (prisma ? withTrackingSweep(prisma, input) : Promise.resolve([])),
+          markPolled: (organizationId, shipmentId, at) =>
+            prisma
+              ? withOrgTransaction(prisma, organizationId, async (tx) => {
+                  await tx.shipment.update({
+                    where: { id: shipmentId },
+                    data: { lastPolledAt: at },
+                  });
+                })
+              : Promise.resolve(),
         });
     }
   };

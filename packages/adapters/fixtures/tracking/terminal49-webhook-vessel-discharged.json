@@ -1,0 +1,45 @@
+{
+  "data": {
+    "id": "wn_01hx0000000000000000000002",
+    "type": "webhook_notification",
+    "attributes": {
+      "event": "container.transport.vessel_discharged",
+      "delivery_status": "pending",
+      "created_at": "2026-10-28T09:00:00Z"
+    },
+    "relationships": {
+      "reference_object": { "data": { "id": "te_0002", "type": "transport_event" } }
+    }
+  },
+  "included": [
+    {
+      "id": "te_0002",
+      "type": "transport_event",
+      "attributes": {
+        "event": "container.transport.vessel_discharged",
+        "created_at": "2026-10-28T08:55:00Z",
+        "timestamp": "2026-10-28T07:40:00Z",
+        "timezone": "Europe/London",
+        "voyage_number": "042W",
+        "location_locode": "GBFXT",
+        "data_source": "terminal"
+      },
+      "relationships": {
+        "container": { "data": { "id": "c_0001", "type": "container" } },
+        "vessel": { "data": { "id": "v_0001", "type": "vessel" } },
+        "location": { "data": { "id": "p_0002", "type": "port" } }
+      }
+    },
+    { "id": "c_0001", "type": "container", "attributes": { "number": "CSQU3054383" } },
+    {
+      "id": "v_0001",
+      "type": "vessel",
+      "attributes": { "name": "EXAMPLE MAERSK", "imo": "9074729" }
+    },
+    {
+      "id": "p_0002",
+      "type": "port",
+      "attributes": { "name": "Felixstowe", "code": "GBFXT", "latitude": 51.95, "longitude": 1.35 }
+    }
+  ]
+}

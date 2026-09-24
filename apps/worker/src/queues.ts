@@ -13,6 +13,9 @@ export const QUEUE_NAMES = [
   // M2: on-demand identity checks enqueued by apps/web (payload { organizationId }); no cron.
   'eori-verify',
   'vat-verify',
+  'vessel-poll', // M9
+  'tracking-poll', // M9
+  'tracking-events', // M9 (event-driven: fed by the web app's webhook route, no schedule)
 ] as const;
 export type QueueName = (typeof QUEUE_NAMES)[number];
 
@@ -21,6 +24,9 @@ export const ON_DEMAND_QUEUE_NAMES = [
   'eori-verify',
   'vat-verify',
 ] as const satisfies readonly QueueName[];
+
+/** M9: queues with no repeatable schedule; jobs are added by producers (the web app). */
+export const EVENT_DRIVEN_QUEUES: readonly QueueName[] = ['tracking-events'];
 
 export const isQueueName = (s: string): s is QueueName =>
   (QUEUE_NAMES as readonly string[]).includes(s);
@@ -60,6 +66,12 @@ export const SCHEDULES: Record<QueueName, readonly RepeatableSchedule[]> = {
   // M2: no schedule — jobs are added by the web app (settings) when an EORI / VAT number is saved.
   'eori-verify': [],
   'vat-verify': [],
+  // M9 (ADR-0017): the hourly sweep picks vessels whose nextPollAt has passed; the per-vessel
+  // interval (18 h / 5 h / 1 h) lives in the job, not the schedule. tracking-poll is the 6-hourly
+  // milestone fallback (brief §6.4). tracking-events has no schedule (see EVENT_DRIVEN_QUEUES).
+  'vessel-poll': [{ id: 'vessel-poll:hourly', pattern: '30 * * * *' }],
+  'tracking-poll': [{ id: 'tracking-poll:six-hourly', pattern: '15 */6 * * *' }],
+  'tracking-events': [],
 };
 
 /** The slice of `bullmq.Queue` the scheduler needs, so tests can pass a fake. */

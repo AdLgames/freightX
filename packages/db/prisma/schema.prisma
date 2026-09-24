@@ -72,21 +72,30 @@ model Organization {
   companiesHouseCheckedAt DateTime?          @map("companies_house_checked_at")
   companiesHouseName      String?            @map("companies_house_name")
 
-  members         Membership[]
-  invitations     Invitation[] // M2 (NEW vs brief) pending and historical invitations
-  products        Product[]
-  suppliers       Supplier[]
-  quotes          Quote[]
-  quoteLines      QuoteLine[] // (NEW vs brief) inverse of the denormalised QuoteLine.organizationId
-  shipments       Shipment[]
-  shipmentEvents  ShipmentEvent[] // (NEW vs brief) inverse of the denormalised ShipmentEvent.organizationId
-  documents       Document[] // (NEW vs brief) inverse of Document.organizationId
-  auditLogs       AuditLog[]
-  customsProfile  CustomsProfile? // (NEW vs brief) 1:1 customs/payment routing settings (§6.1 Phase 2 preconditions)
+  members            Membership[]
+  invitations        Invitation[] // M2 (NEW vs brief) pending and historical invitations
+  products           Product[]
+  suppliers          Supplier[]
+  quotes             Quote[]
+  quoteLines         QuoteLine[] // (NEW vs brief) inverse of the denormalised QuoteLine.organizationId
+  shipments          Shipment[]
+  shipmentEvents     ShipmentEvent[] // (NEW vs brief) inverse of the denormalised ShipmentEvent.organizationId
+  documents          Document[] // (NEW vs brief) inverse of Document.organizationId
+  auditLogs          AuditLog[]
+  customsProfile     CustomsProfile? // (NEW vs brief) 1:1 customs/payment routing settings (§6.1 Phase 2 preconditions)
   // M3 (ADR-0012): inverses of the denormalised organizationId on the supplier sub-entities
-  pickupLocations PickupLocation[]
-  paymentTerms    PaymentTerms[]
-  payoutMethods   PayoutMethod[]
+  pickupLocations    PickupLocation[]
+  paymentTerms       PaymentTerms[]
+  payoutMethods      PayoutMethod[]
+  containers         Container[] // M9 (ADR-0017) inverse of Container.organizationId
+  // M7 (ADR-0013): inverses of the denormalised organizationId on purchase orders
+  purchaseOrders     PurchaseOrder[]
+  purchaseOrderItems PurchaseOrderItem[]
+  poCounters         PoCounter[]
+  // M8 (ADR-0014)
+  bills              Bill[]
+  billLines          BillLine[]
+  billPayments       BillPayment[]
 
   @@map("organizations")
 }
@@ -320,6 +329,8 @@ model Supplier {
   pickupLocations PickupLocation[]
   paymentTerms    PaymentTerms?
   payoutMethods   PayoutMethod[]
+  purchaseOrders  PurchaseOrder[] // M7 (ADR-0013)
+  bills           Bill[] // M8 (ADR-0014): supplier invoices and credit notes
 
   @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from products (keeps denormalised org ids consistent)
   @@index([organizationId])
@@ -349,9 +360,11 @@ model PickupLocation {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  supplier     Supplier     @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  supplier       Supplier        @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[] // M7 (ADR-0013)
 
+  @@unique([id, supplierId, organizationId]) // M7: target of the composite FK from purchase_orders — a PO's pickup location must belong to the PO's supplier and tenant
   @@index([organizationId])
   @@index([supplierId])
   @@map("pickup_locations")
@@ -465,11 +478,12 @@ model Product {
   preferenceEligible Boolean   @default(false) @map("preference_eligible") // informational: any 142 measure existed at lookup; the engine decides per origin
   archivedAt         DateTime? @map("archived_at") // archive instead of delete: quote lines reference products
 
-  organization Organization @relation(fields: [organizationId], references: [id])
+  organization       Organization        @relation(fields: [organizationId], references: [id])
   // (NEW vs brief) composite FK (supplier_id, organization_id) → suppliers(id, organization_id):
   // a product can never point at another tenant's supplier, whatever the app layer does.
-  supplier     Supplier?    @relation(fields: [supplierId, organizationId], references: [id, organizationId])
-  quoteLines   QuoteLine[]
+  supplier           Supplier?           @relation(fields: [supplierId, organizationId], references: [id, organizationId])
+  quoteLines         QuoteLine[]
+  purchaseOrderItems PurchaseOrderItem[] // M7 (ADR-0013)
 
   @@unique([organizationId, sku])
   @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from quote_lines
@@ -559,6 +573,14 @@ model Quote {
   financingFee         Decimal        @default(0) @map("financing_fee") @db.Decimal(14, 2) // (NEW vs brief) engine QuoteTotals.financingFee — broker deferment fee
   inlandVatAdjustment  Decimal        @default(0) @map("inland_vat_adjustment") @db.Decimal(14, 2) // (NEW vs brief) engine QuoteTotals.inlandVatAdjustment — VAT-base padding, not landed cost
   paymentMethod        PaymentMethod? @map("payment_method") // (NEW vs brief) routing in force when computed — a snapshot of CustomsProfile.paymentMethod, not a reference
+  // M4 (migration 0011): the builder's inputs as entered (product ids, quantities, flags, decimal
+  // strings) so a DRAFT can be reopened in the builder. Never read for money: every figure comes
+  // from the snapshot columns above. Null for quotes not created by the builder.
+  builderInput         Json?          @map("builder_input")
+  // M7 (ADR-0013, migration 0012): the purchase order this quote prices, when it was built from
+  // one ("Get freight quote"). Optional — quotes without a PO stay possible. At most one ACCEPTED
+  // quote per PO (partial unique index quotes_one_accepted_per_po, hand-written in 0012).
+  purchaseOrderId      String?        @map("purchase_order_id") @db.Uuid
 
   warnings    Json // array of {code, message} e.g. ADD_APPLIES, HS_UNVERIFIED
   calcVersion String    @map("calc_version") // engine version that produced this quote
@@ -566,14 +588,18 @@ model Quote {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  lines        QuoteLine[]
-  shipment     Shipment?
-  documents    Document[] // (NEW vs brief, M5) inverse of Document.quoteId — documents attached before a shipment exists
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  lines         QuoteLine[]
+  shipment      Shipment?
+  documents     Document[] // (NEW vs brief, M5) inverse of Document.quoteId — documents attached before a shipment exists
+  // M7: composite FK — a quote can only be linked to its own tenant's purchase order. Restrict:
+  // purchase orders are cancelled, never deleted, once a quote references them.
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
   @@unique([id, organizationId]) // (NEW vs brief) target of composite FKs from quote_lines and shipments
   @@index([organizationId, status])
   @@index([organizationId, validUntil]) // (NEW vs brief) hourly expiry job (§5.8) scans by validUntil
+  @@index([organizationId, purchaseOrderId]) // M7: "quotes for this purchase order"
   @@map("quotes")
 }
 
@@ -633,6 +659,257 @@ model QuoteLine {
   @@map("quote_lines")
 }
 
+// ---------- M7 (ADR-0013): purchase orders ----------
+// What the importer agreed to buy: supplier, products, quantities, unit prices and payment terms.
+// Money is in the PO CURRENCY (unit costs Decimal(14,4), totals Decimal(14,2)); nothing here is in
+// GBP — FX happens on the quote built from the PO. Rules in migration 0012 (hand-written part):
+//   * po_number `PO-YYYY-NNN`, unique per organisation, from po_counters (one row per org + year)
+//   * status transitions checked by trigger: DRAFT→ISSUED→IN_PRODUCTION→READY_TO_SHIP→SHIPPED→CLOSED,
+//     ISSUED→READY_TO_SHIP (production may be skipped), any status but CLOSED/CANCELLED→CANCELLED
+//   * once a PO is not DRAFT only status, the paid-at/due-at dates, notes and updated_at may change;
+//     its items are frozen (same to_jsonb technique as the accepted-quote trigger, 0002)
+//   * payment is NOT a status: deposit/balance amounts are computed from the supplier's PaymentTerms
+//     when the PO is issued and frozen; the paid-at dates are set by the user (later: the payments
+//     partner's webhook, ADR-0016)
+
+// Additive only (§4 migration rules).
+enum PurchaseOrderStatus {
+  DRAFT
+  ISSUED
+  IN_PRODUCTION
+  READY_TO_SHIP
+  SHIPPED
+  CLOSED
+  CANCELLED
+
+  @@map("purchase_order_status")
+}
+
+model PurchaseOrder {
+  id                String              @id @default(uuid()) @db.Uuid
+  organizationId    String              @map("organization_id") @db.Uuid
+  poNumber          String              @map("po_number") // PO-2026-001; CHECK format in 0012
+  supplierId        String              @map("supplier_id") @db.Uuid
+  pickupLocationId  String?             @map("pickup_location_id") @db.Uuid // origin port for "get freight quote"
+  status            PurchaseOrderStatus @default(DRAFT)
+  currency          String // ISO 4217, copied from the supplier's default and editable while DRAFT
+  incoterm          Incoterm
+  totalGoodsValue   Decimal             @default(0) @map("total_goods_value") @db.Decimal(14, 2) // sum of item line totals, PO currency; frozen on issue
+  depositPct        Decimal?            @map("deposit_pct") @db.Decimal(5, 2) // percent convention ("30.00" = 30%); set on issue from PaymentTerms
+  depositAmount     Decimal?            @map("deposit_amount") @db.Decimal(14, 2)
+  depositDueAt      DateTime?           @map("deposit_due_at")
+  depositPaidAt     DateTime?           @map("deposit_paid_at")
+  balanceAmount     Decimal?            @map("balance_amount") @db.Decimal(14, 2)
+  balanceTrigger    BalanceTrigger?     @map("balance_trigger") // copied from PaymentTerms on issue (DEPOSIT_BALANCE)
+  balanceDueAt      DateTime?           @map("balance_due_at")
+  balancePaidAt     DateTime?           @map("balance_paid_at")
+  expectedShipMonth DateTime?           @map("expected_ship_month") @db.Date // first day of the month (CHECK); the HMRC rate month the quote should use once published
+  issuedAt          DateTime?           @map("issued_at")
+  notes             String?
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  // Composite FKs: the supplier and the pickup location must belong to this tenant, and the
+  // pickup location to this supplier (three-column FK).
+  supplier       Supplier            @relation(fields: [supplierId, organizationId], references: [id, organizationId])
+  pickupLocation PickupLocation?     @relation(fields: [pickupLocationId, supplierId, organizationId], references: [id, supplierId, organizationId])
+  items          PurchaseOrderItem[]
+  quotes         Quote[]
+  billLines      BillLine[] // M8 (ADR-0014): actual costs booked against this order
+
+  @@unique([organizationId, poNumber])
+  @@unique([id, organizationId]) // target of the composite FKs from purchase_order_items and quotes
+  @@index([organizationId, status])
+  @@index([supplierId])
+  @@map("purchase_orders")
+}
+
+// One product line of a PO. SKU and name are snapshots (the catalogue may change); weight, volume,
+// HS code and origin are deliberately NOT frozen here — they are snapshotted onto QuoteLine when a
+// quote is built (ADR-0013). Frozen once the PO leaves DRAFT (trigger, 0012).
+model PurchaseOrderItem {
+  id              String  @id @default(uuid()) @db.Uuid
+  organizationId  String  @map("organization_id") @db.Uuid
+  purchaseOrderId String  @map("purchase_order_id") @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  position        Int // display order, 0-based
+  quantity        Int
+  unitCost        Decimal @map("unit_cost") @db.Decimal(14, 4) // PO currency
+  lineTotal       Decimal @map("line_total") @db.Decimal(14, 2) // round2(quantity × unitCost)
+  sku             String // snapshot
+  name            String // snapshot
+
+  organization  Organization  @relation(fields: [organizationId], references: [id])
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  product       Product       @relation(fields: [productId, organizationId], references: [id, organizationId])
+  billLines     BillLine[] // M8 (ADR-0014): costs booked against this SKU
+
+  @@unique([id, purchaseOrderId, organizationId]) // M8: target of the three-column FK from bill_lines
+  @@index([organizationId])
+  @@index([purchaseOrderId])
+  @@map("purchase_order_items")
+}
+
+// Per-organisation, per-year PO number counter. `next` is the next NNN to hand out; the create
+// transaction does `INSERT ... ON CONFLICT DO UPDATE SET next = next + 1 RETURNING` so concurrent
+// creates serialise on the row and never share a number. Tenant table (RLS) like the others.
+model PoCounter {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  year           Int
+  next           Int    @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, year])
+  @@map("po_counters")
+}
+
+// ---------------------------------------------------------------------------------------------
+// M8 (ADR-0014): actual costs as an accounts-payable sub-ledger. A Bill is one vendor document
+// (supplier invoice, forwarder invoice, customs charges, HMRC statement); its lines carry the
+// costing link to a purchase order (and optionally one of its items); payments carry the FX
+// actually paid. Posted bills are immutable (trigger bills_guard, migration 0013); corrections
+// are credit notes. Variance and per-SKU absorption are computed by the engine's `absorbActuals`
+// from posted lines converted to GBP — nothing here is a stored result.
+// ---------------------------------------------------------------------------------------------
+
+enum VendorType {
+  SUPPLIER
+  FORWARDER
+  CUSTOMS_BROKER
+  HMRC
+  OTHER
+
+  @@map("vendor_type")
+}
+
+enum BillType {
+  SUPPLIER_INVOICE
+  FREIGHT_INVOICE
+  CUSTOMS_CHARGES
+  CUSTOMS_STATEMENT
+  OTHER
+
+  @@map("bill_type")
+}
+
+enum BillStatus {
+  DRAFT
+  POSTED
+  PAID
+
+  @@map("bill_status")
+}
+
+/// One-to-one with the engine's COST_CATEGORIES (packages/engine/src/actuals.ts): each maps to a
+/// stored quote total, so every variance is a direct subtraction. Additive only.
+enum CostCategory {
+  GOODS
+  ASSISTS
+  FREIGHT_TO_BORDER
+  FREIGHT_POST_BORDER
+  ORIGIN_FEES
+  DESTINATION_FEES
+  CLEARANCE
+  INSURANCE
+  DUTY
+  IMPORT_VAT
+  DEFERMENT_FEE
+  UNPLANNED
+  OTHER
+
+  @@map("cost_category")
+}
+
+enum UnplannedReason {
+  DEMURRAGE
+  DETENTION
+  STORAGE
+  CUSTOMS_EXAMINATION
+  OTHER
+
+  @@map("unplanned_reason")
+}
+
+model Bill {
+  id              String     @id @default(uuid()) @db.Uuid
+  organizationId  String     @map("organization_id") @db.Uuid
+  vendorType      VendorType @map("vendor_type")
+  supplierId      String?    @map("supplier_id") @db.Uuid // required when vendorType = SUPPLIER (CHECK in 0013)
+  vendorName      String?    @map("vendor_name") // required for every other vendor type (CHECK in 0013)
+  billType        BillType   @map("bill_type")
+  referenceNumber String     @map("reference_number") // the vendor's invoice / credit note / statement number; unique per vendor (partial indexes in 0013)
+  isCreditNote    Boolean    @default(false) @map("is_credit_note") // a negative document: its lines reduce the actuals
+  status          BillStatus @default(DRAFT)
+  currency        String // ISO 4217; lines and payments are in this currency
+  totalAmount     Decimal    @map("total_amount") @db.Decimal(14, 2) // must equal the sum of the lines when posted (trigger)
+  issuedOn        DateTime   @map("issued_on") @db.Date
+  dueOn           DateTime?  @map("due_on") @db.Date
+  documentId      String?    @map("document_id") @db.Uuid // the invoice in the vault (M5); attachable after posting
+  notes           String?
+  postedAt        DateTime?  @map("posted_at")
+  paidAt          DateTime?  @map("paid_at") // set when payments cover the total
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  supplier     Supplier?     @relation(fields: [supplierId, organizationId], references: [id, organizationId])
+  document     Document?     @relation(fields: [documentId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  lines        BillLine[]
+  payments     BillPayment[]
+
+  @@unique([id, organizationId]) // target of the composite FKs from bill_lines and bill_payments
+  @@index([organizationId, status])
+  @@index([organizationId, supplierId])
+  @@map("bills")
+}
+
+model BillLine {
+  id                  String           @id @default(uuid()) @db.Uuid
+  organizationId      String           @map("organization_id") @db.Uuid
+  billId              String           @map("bill_id") @db.Uuid
+  position            Int // display order, 0-based
+  costCategory        CostCategory     @map("cost_category")
+  unplannedReason     UnplannedReason? @map("unplanned_reason") // only with costCategory = UNPLANNED (CHECK)
+  description         String
+  amount              Decimal          @db.Decimal(14, 2) // bill currency; may be negative for a discount line, the bill total may not
+  // The costing link (ADR-0014): every line belongs to one purchase order, optionally to one of
+  // its items (a SKU). Shared lines are apportioned by the engine at read time.
+  purchaseOrderId     String           @map("purchase_order_id") @db.Uuid
+  purchaseOrderItemId String?          @map("purchase_order_item_id") @db.Uuid
+
+  organization      Organization       @relation(fields: [organizationId], references: [id])
+  bill              Bill               @relation(fields: [billId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId, organizationId], references: [id, organizationId])
+  // Three-column FK: the item must belong to the line's purchase order and tenant.
+  purchaseOrderItem PurchaseOrderItem? @relation(fields: [purchaseOrderItemId, purchaseOrderId, organizationId], references: [id, purchaseOrderId, organizationId])
+
+  @@index([organizationId, purchaseOrderId])
+  @@index([billId])
+  @@map("bill_lines")
+}
+
+model BillPayment {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  billId         String   @map("bill_id") @db.Uuid
+  paidOn         DateTime @map("paid_on") @db.Date
+  amount         Decimal  @db.Decimal(14, 2) // bill currency
+  fxRate         Decimal  @map("fx_rate") @db.Decimal(14, 6) // GBP per 1 unit of the bill currency, as actually paid; 1 for GBP
+  amountGbp      Decimal  @map("amount_gbp") @db.Decimal(14, 2) // round2(amount × fxRate), what the bank took
+  reference      String? // bank / partner reference, free text
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  bill         Bill         @relation(fields: [billId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([billId])
+  @@map("bill_payments")
+}
+
 // ---------- Execution (Phase 2) ----------
 
 enum ShipmentStatus {
@@ -655,7 +932,7 @@ enum ShipmentStatus {
 model Shipment {
   id                    String         @id @default(uuid()) @db.Uuid
   organizationId        String         @map("organization_id") @db.Uuid // denormalised for RLS
-  quoteId               String         @unique @map("quote_id") @db.Uuid
+  quoteId               String?        @unique @map("quote_id") @db.Uuid // M9: optional — a container can be tracked before any quote exists (ADR-0017); nullable-unique
   status                ShipmentStatus @default(PENDING_DOCS)
   forwarderId           String?        @map("forwarder_id") // which partner
   forwarderRef          String?        @map("forwarder_ref")
@@ -667,14 +944,23 @@ model Shipment {
   ata                   DateTime?
   bookingIdempotencyKey String?        @unique @map("booking_idempotency_key") // §6.2
   lastPolledAt          DateTime?      @map("last_polled_at")
+  // M9 (ADR-0017) — Phase-1 tracking fields. All optional so the migration is additive.
+  reference             String? // user label, e.g. "Autumn stock — Yantian"
+  masterBillNumber      String?        @map("master_bill_number")
+  originLocode          String?        @map("origin_locode") // UN/LOCODE (Port.locode when known)
+  destinationLocode     String?        @map("destination_locode") // UN/LOCODE; drives the vessel poll distance
+  trackingProvider      String?        @map("tracking_provider") // MilestoneProvider.id, e.g. "terminal49"; null = manual only
+  trackingRequestRef    String?        @map("tracking_request_ref") // provider's subscription id (never a secret)
+  trackingSubscribedAt  DateTime?      @map("tracking_subscribed_at")
   createdAt             DateTime       @default(now()) @map("created_at")
   updatedAt             DateTime       @updatedAt @map("updated_at")
 
   organization Organization    @relation(fields: [organizationId], references: [id])
   // (NEW vs brief) composite FK: a shipment can only be booked against its own tenant's quote.
-  quote        Quote           @relation(fields: [quoteId, organizationId], references: [id, organizationId])
+  quote        Quote?          @relation(fields: [quoteId, organizationId], references: [id, organizationId])
   documents    Document[]
   events       ShipmentEvent[]
+  containers   Container[] // M9
 
   @@unique([id, organizationId]) // (NEW vs brief) target of composite FKs from shipment_events and documents
   @@unique([quoteId, organizationId]) // (NEW vs brief) Prisma requires the 1:1 relation's scalar fields to be unique together (quoteId alone already is)
@@ -694,15 +980,69 @@ model ShipmentEvent {
   occurredAt      DateTime        @map("occurred_at")
   receivedAt      DateTime        @default(now()) @map("received_at")
   payload         Json // raw, redacted of PII
+  // M9 (ADR-0017) — milestones live here, not in a separate TrackingEvent table. All optional.
+  containerId     String?         @map("container_id") @db.Uuid
+  locationLocode  String?         @map("location_locode")
+  locationName    String?         @map("location_name")
+  latitude        Decimal?        @db.Decimal(9, 6) // coordinates, not money
+  longitude       Decimal?        @db.Decimal(9, 6)
+  vesselImo       String?         @map("vessel_imo")
+  payloadSha256   String?         @map("payload_sha256") // sha256 of the provider payload (dedupe forensics)
 
   organization Organization @relation(fields: [organizationId], references: [id]) // (NEW vs brief)
   // (NEW vs brief) composite FK keeps the denormalised organization_id consistent with the shipment.
   shipment     Shipment     @relation(fields: [shipmentId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  // M9: composite FK — an event can only point at a container of the same tenant.
+  container    Container?   @relation(fields: [containerId, organizationId], references: [id, organizationId])
 
-  @@unique([source, providerEventId])
+  // M9: idempotency is per organisation — one provider event fans out to every tenant tracking
+  // that container number (ADR-0017), so (source, providerEventId) alone would block the second.
+  @@unique([organizationId, source, providerEventId])
   @@index([organizationId]) // (NEW vs brief) RLS / tenant scoping
   @@index([shipmentId, occurredAt])
+  @@index([containerId]) // M9
   @@map("shipment_events")
+}
+
+// M9 (ADR-0017) — ISO 6346 size/type codes. Prisma enum values cannot start with a digit, so the
+// codes carry a `C` prefix (`C20GP` = 20GP). Additive only.
+enum ContainerSizeType {
+  C20GP
+  C40GP
+  C40HC
+  C45HC
+
+  @@map("container_size_type")
+}
+
+// M9 (ADR-0017) — one physical container of a shipment. Tenant table (RLS in migration 0010).
+// `containerNumber` is validated in code (ISO 6346 check digit) and by a format CHECK in the DB.
+model Container {
+  id              String             @id @default(uuid()) @db.Uuid
+  organizationId  String             @map("organization_id") @db.Uuid
+  shipmentId      String             @map("shipment_id") @db.Uuid
+  containerNumber String             @map("container_number") // ISO 6346, upper case, no spaces
+  sizeType        ContainerSizeType? @map("size_type")
+  vesselImo       String?            @map("vessel_imo") // set by LOADED_ON_VESSEL; logically references active_vessels(imo), no FK (shared table, see README)
+  vesselName      String?            @map("vessel_name")
+  voyageNumber    String?            @map("voyage_number")
+  providerRef     String?            @map("provider_ref") // provider's container id, if it issues one
+  lastMilestone   String?            @map("last_milestone") // normalised milestone name (adapters `Milestone`)
+  lastMilestoneAt DateTime?          @map("last_milestone_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  // Composite FK: a container can only belong to its own tenant's shipment.
+  shipment     Shipment        @relation(fields: [shipmentId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  events       ShipmentEvent[]
+
+  @@unique([organizationId, containerNumber, shipmentId])
+  @@unique([id, organizationId]) // target of the composite FK from shipment_events
+  @@index([organizationId])
+  @@index([containerNumber]) // M9: cross-tenant webhook lookup by number (SECURITY DEFINER function, migration 0010)
+  @@index([shipmentId])
+  @@map("containers")
 }
 
 enum DocumentType {
@@ -776,7 +1116,9 @@ model Document {
   quote        Quote?       @relation(fields: [quoteId, organizationId], references: [id, organizationId], onDelete: Restrict)
   uploadedBy   User         @relation("uploadedDocuments", fields: [uploadedById], references: [id]) // (NEW vs brief) who uploaded (audit / UI)
   verifiedBy   User?        @relation("verifiedDocuments", fields: [verifiedById], references: [id]) // (NEW vs brief) who verified
+  bills        Bill[] // M8 (ADR-0014): inverse of Bill.documentId (the invoice in the vault)
 
+  @@unique([id, organizationId]) // M8: target of the composite FK from bills
   @@index([organizationId])
   @@index([shipmentId]) // (NEW vs brief) booking preconditions look up docs by shipment (§6.1)
   @@index([organizationId, quoteId]) // (NEW vs brief, M5) vault "by quote" and missing-files list
@@ -848,4 +1190,57 @@ model FxRate {
   @@unique([source, currency, validFrom])
   @@index([currency, validFrom]) // (NEW vs brief) FX resolution looks up "latest rate for currency as of date"
   @@map("fx_rates")
+}
+
+// ---------- M9 shipment tracking, shared (non-tenant) tables (ADR-0017) ----------
+
+// Polling state of a vessel (ADR-0017 "smart pull"). Additive only.
+enum VesselPollState {
+  AT_SEA
+  COASTAL
+  APPROACHING
+  DOCKED
+  STALE
+
+  @@map("vessel_poll_state")
+}
+
+// One row per ship that currently carries a tracked container, whichever organisations own the
+// cargo: one AIS poll serves them all. Not tenant-scoped, no RLS. The app role reads it; the
+// worker (and the milestone processor) writes it. In this repo both use the `harbour_app` role
+// for now — the app/worker role split is a TODO in packages/db README ("0010").
+// Coordinates, speed and heading are not money (Decimal columns for exactness, numbers in code).
+model ActiveVessel {
+  imo                  String          @id // 7 digits, check digit validated in code + CHECK in 0010
+  name                 String?
+  lastLatitude         Decimal?        @map("last_latitude") @db.Decimal(9, 6)
+  lastLongitude        Decimal?        @map("last_longitude") @db.Decimal(9, 6)
+  speedKnots           Decimal?        @map("speed_knots") @db.Decimal(5, 1)
+  headingDeg           Decimal?        @map("heading_deg") @db.Decimal(5, 1)
+  positionAt           DateTime?       @map("position_at") // when the AIS fix was taken (never an extrapolation)
+  positionSource       String?         @map("position_source") // PositionProvider.name, e.g. SPIRE
+  providerEtaAt        DateTime?       @map("provider_eta_at") // shown as "Carrier ETA"; never computed by us
+  destinationLocode    String?         @map("destination_locode") // Port.locode used for the distance-based poll interval
+  pollState            VesselPollState @default(AT_SEA) @map("poll_state")
+  nextPollAt           DateTime?       @map("next_poll_at") // null = never (DOCKED)
+  lastError            String?         @map("last_error") // "<n>:<class>" consecutive-failure counter, no secrets
+  activeContainerCount Int             @default(0) @map("active_container_count") // 0 → DOCKED (kill switch)
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+
+  @@index([nextPollAt, pollState]) // the hourly vessel-poll selects `nextPollAt <= now AND pollState <> DOCKED`
+  @@map("active_vessels")
+}
+
+// Small UN/LOCODE reference table for distance calculations and the origin/destination selects.
+// Seeded in migration 0010 (approximate coordinates, ±0.01°, not for navigation). Shared, no RLS.
+model Port {
+  locode      String  @id // UN/LOCODE, e.g. GBFXT
+  name        String
+  countryCode String  @map("country_code") // ISO 3166-1 alpha-2
+  latitude    Decimal @db.Decimal(9, 6)
+  longitude   Decimal @db.Decimal(9, 6)
+  chokePoint  Boolean @default(false) @map("choke_point") // transshipment hub / choke point that tightens polling (COASTAL)
+
+  @@map("ports")
 }

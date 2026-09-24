@@ -25,6 +25,18 @@ export const ACTIONS = [
   // and the audit-log view are OWNER/ADMIN, like the other organisation settings.
   'org.company.confirm',
   'audit.view',
+  'shipment.track', // M9: track a container / add a manual milestone (not booking — that stays gated)
+  // M7 (ADR-0013): purchase orders. Viewing mirrors quote.view, editing drafts / moving status /
+  // recording payment dates mirrors quote.edit, issuing (which freezes money) mirrors quote.accept.
+  'order.view',
+  'order.edit',
+  'order.issue',
+  // M8 (ADR-0014): bills (the AP sub-ledger). Viewing mirrors order.view, keying in drafts and
+  // recording payments mirrors order.edit, posting (which makes a bill a financial record and
+  // freezes it) mirrors order.issue.
+  'bill.view',
+  'bill.edit',
+  'bill.post',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -48,6 +60,15 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   // M2
   'org.company.confirm': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'audit.view': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  'shipment.track': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false }, // M9
+  // M7
+  'order.view': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: true },
+  'order.edit': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false },
+  'order.issue': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  // M8
+  'bill.view': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: true },
+  'bill.edit': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false },
+  'bill.post': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
 };
 
 export class ForbiddenError extends Error {
