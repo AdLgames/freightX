@@ -12,6 +12,7 @@ import { PrismaTrackingStore, type PrismaClient } from '@harbour/db';
 import type { Env } from '../env.server';
 import type { Logger } from '../logger.server';
 import type { CspAdditions } from '../security-headers.server';
+import { waitUntil } from '@vercel/functions';
 import type { RedisClient } from '../redis.server';
 import { AisRelay, MemoryAisCache, redisAisCache } from './ais-relay.server';
 import { mapCspAdditions } from './csp.server';
@@ -174,6 +175,14 @@ export const createTrackingServices = (deps: TrackingDeps): TrackingServices => 
           cache: deps.redis ? redisAisCache(deps.redis) : new MemoryAisCache(),
           log: logger,
           now: () => now().getTime(),
+          // Vercel: keep the background collection alive after the response; a no-op elsewhere.
+          background: (work) => {
+            try {
+              waitUntil(work);
+            } catch {
+              // not on Vercel
+            }
+          },
         })
       : null,
     webhookProvider: (providerId) => milestoneProviderForWebhook(providerId, env, { now }),

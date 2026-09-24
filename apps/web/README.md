@@ -708,18 +708,21 @@ rows through `withOrg`; every POST carries `<CsrfInput/>`.
   quiet without posted bills. Capped at twelve candidate orders per load.
 - **Live AIS traffic** (`AISSTREAM_API_KEY`, `services/tracking/ais-relay.server.ts`,
   `routes/app.api.ais.tsx`, `lib/ais-client.ts`, `tracking-map.client.tsx`): aisstream.io does
-  not accept browser connections, so the server relays it. A collection opens the stream,
-  subscribes to the UK bounding box (aisstream acknowledges with a `SubscriptionConfirmation`
-  and then sends binary frames of UTF-8 JSON), gathers position reports for five seconds and
-  closes; the
-  merged snapshot (capped at 4,000 vessels, silent ones dropped after 15 minutes) is cached in
-  Redis when configured (else in-process) and served fresh for 12 seconds, and a lock keeps one
-  collection running at a time across instances (aisstream allows three connections per
-  account). The browser polls `/app/api/ais?since=` every 10 seconds (members only, 30/min per
-  user) and draws lime dots; the legend shows the vessel count, "warming" on the first
-  collection, or the provider's refusal verbatim (for example an invalid key). It is the picture
-  around the organisation's ships, never its ships: real positions for tracked containers still
-  come from the position providers. The key never leaves the server.
+  not accept browser connections, so the server relays it. Every request is answered straight
+  from the snapshot cache (Redis when configured, else in-process; capped at 4,000 vessels,
+  silent ones dropped after 15 minutes). A request that finds the snapshot older than 12 seconds
+  also starts a collection in the background, handed to Vercel's `waitUntil` so it outlives the
+  response (needs Fluid Compute, the default; a no-op elsewhere): it opens the stream, subscribes
+  to the UK and Irish waters box (aisstream acknowledges with a `SubscriptionConfirmation` and
+  then sends binary frames of UTF-8 JSON) and for 25 seconds merges what it hears into the
+  cache every 5 seconds, so pollers watch the picture fill in. A lock keeps one collection
+  running at a time across instances (aisstream allows three connections per account), and
+  nothing runs while nobody has the page open. The browser polls `/app/api/ais?since=` every
+  10 seconds (members only, 30/min per user) and draws lime dots; the legend shows the vessel
+  count, "connecting" before the first collection has written anything, or the provider's
+  refusal verbatim (for example an invalid key). It is the picture around the organisation's
+  ships, never its ships: real positions for tracked containers still come from the position
+  providers. The key never leaves the server.
 - **Treasury** (`components/home/treasury-card.tsx`, `services/fx-treasury.server.ts`): GBP/USD
   and GBP/EUR from the ECB reference rates in the FX store (`FxRateStore.history`, never an API
   call in the request path, §5.7) with the change against the newest rate on or before seven
