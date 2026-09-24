@@ -406,6 +406,48 @@ relies on that.
   backfill, the CHECKs, the partial index, the policies, the grants and idempotency;
   `apps/web/app/routes/catalogue.db.test.ts` exercises the constraints and RLS against a database.
 
+## Purchase orders (migration 0012, M7, ADR-0013)
+
+`0012_purchase_orders` = generated DDL (part 1) + hand-written, idempotent rules (part 2);
+additive, rollback note in the file.
+
+- Enum `purchase_order_status` (`DRAFT`, `ISSUED`, `IN_PRODUCTION`, `READY_TO_SHIP`, `SHIPPED`,
+  `CLOSED`, `CANCELLED`; additive only). Payment and transit are not statuses.
+- New tenant tables (denormalised `organization_id`, RLS `ENABLE` + `FORCE`, `<table>_tenant`
+  policy, grants to `harbour_app`, all in `TENANT_MODELS`/`TENANT_TABLES`):
+  - `purchase_orders` — composite FKs `(supplier_id, organization_id) → suppliers` and the
+    three-column `(pickup_location_id, supplier_id, organization_id) → pickup_locations`, so a
+    pickup location always belongs to the order's supplier and tenant (the target unique index
+    on `pickup_locations` is added here). CHECKs: `po_number ~ '^PO-[0-9]{4}-[0-9]{3,}$'`
+    (unique per organisation), currency format, `deposit_pct` in [0, 100], non-negative
+    amounts, `deposit_amount + balance_amount = total_goods_value` when both are set, an
+    `issued_at` for every status but DRAFT/CANCELLED, `expected_ship_month` on the first of a
+    month.
+  - `purchase_order_items` — `(purchase_order_id, organization_id)` → orders `ON DELETE
+CASCADE`, `(product_id, organization_id)` → products; `quantity > 0`, money non-negative.
+  - `po_counters` — one row per organisation and year (`next` = the next NNN). The app allocates
+    a number inside the create transaction with `INSERT … ON CONFLICT (organization_id, year) DO
+UPDATE SET next = next + 1 RETURNING next - 1`; the row lock serialises concurrent creates,
+    a rolled-back create leaves a gap.
+- `quotes.purchase_order_id` (nullable) with a composite FK to `purchase_orders` `ON DELETE
+RESTRICT`, and the partial unique index `quotes_one_accepted_per_po` (`purchase_order_id WHERE
+status = 'ACCEPTED'`): several quotes may price one order, at most one is accepted. The app maps
+  the `P2002` from an `UPDATE` of `quotes` to `PO_QUOTE_ACCEPTED`.
+- Trigger `purchase_orders_guard` (`BEFORE UPDATE OR DELETE`): checks every status change against
+  the ADR-0013 transition table; once the row is not DRAFT only `status`, `deposit_due_at`,
+  `deposit_paid_at`, `balance_due_at`, `balance_paid_at`, `notes` and `updated_at` may change
+  (same `to_jsonb` technique as the accepted-quote trigger, so future columns are protected
+  automatically); `DELETE` is allowed for DRAFT only (cancel instead). Trigger
+  `purchase_order_items_frozen` refuses `INSERT`/`UPDATE`/`DELETE` on the items of a non-DRAFT
+  order, reading the parent under the caller's RLS. Error messages are prefixed `harbour:` and
+  contain the PO number and status, never amounts; `apps/web` maps them to `FROZEN` /
+  `ILLEGAL_TRANSITION`.
+- Hard-deleting an organisation (§7.3 maintenance job) must disable both triggers for its run,
+  as `apps/web/app/routes/orders.db.test.ts` does in its superuser cleanup.
+- `test/migrations.test.ts` checks the DDL shape, the CHECKs, the partial index, the triggers,
+  the policies, the grants and idempotency; `apps/web/app/routes/orders.db.test.ts` exercises the
+  numbering, the freeze, the transitions, the one-accepted-quote rule and RLS against a database.
+
 ## Field encryption (M2, §7.3)
 
 `src/crypto.ts` implements envelope encryption for sensitive columns; today

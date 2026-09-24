@@ -1,5 +1,6 @@
 import { Form, Link } from 'react-router';
-import type { EditorOptions, TotalsView } from '../../services/orders/editor.server';
+import type { EditorOptions } from '../../services/orders/editor.server';
+import type { TotalsView } from '../../services/orders/totals';
 import { INCOTERMS } from '../../validators/calculator';
 import { CURRENCIES } from '../../validators/common';
 import { itemFieldName, type OrderFormValues } from '../../validators/order';

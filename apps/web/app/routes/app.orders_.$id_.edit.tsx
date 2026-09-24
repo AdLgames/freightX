@@ -5,12 +5,8 @@ import { requireOrgContext, withOrg } from '../services/auth.server';
 import { requireCsrf } from '../services/csrf.server';
 import { requestLogger } from '../services/logger.server';
 import { getApp } from '../services/app.server';
-import {
-  applyIntent,
-  editorReply,
-  loadEditorOptions,
-  totalsView,
-} from '../services/orders/editor.server';
+import { applyIntent, editorReply, loadEditorOptions } from '../services/orders/editor.server';
+import { totalsView } from '../services/orders/totals';
 import {
   getOrder,
   orderErrorMessage,

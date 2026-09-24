@@ -1,22 +1,25 @@
 # Build status
 
-- **As of:** 2026-09-23
+- **As of:** 2026-09-24
 - **Branch:** `claude/new-session-ar961c` (PRs #1 and #2 merged to `main`; later work on the branch)
 - **Plan:** `docs/phase-1-build-plan.md` · **Brief:** `docs/engineering-brief.md`
 
 ## Completed
 
-| Area                 | What exists                                                                                                                                                                               | Verified                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Engine 1.1           | Landed cost per unit, HS normalisation, tariff measures, incoterms, apportionment, assists, PVA, deferment fee, inland VAT padding; `absorbActuals` for estimate-to-actual variance       | 35 golden fixtures with hand calculations, property tests      |
-| Adapters             | UK Trade Tariff client and cache, HMRC/ECB FX, rate sheet v1, circuit breaker, SeaRates and schedules stubs, Companies House and HMRC identity checkers, object storage (R2/S3 and local) | Unit and contract tests on hand-authored fixtures              |
-| Database             | Prisma schema, migrations 0001–0008, row-level security, accepted-quote lock, tenancy client, RBAC, field encryption                                                                      | Tests run against Postgres 16 as superuser and as the app role |
-| Worker               | FX refresh, tariff warm, quote expiry, identity verification, document scan, Stripe events                                                                                                | Tests; runs without Redis via `--once`                         |
-| Phase 0 calculator   | Public calculator with tooling/assists, duty payment routing, PVA, live tariff lookup, rate limits, Turnstile, CSP                                                                        | Deployed on Vercel (stopgap host)                              |
-| M1 sign-in and shell | Magic links, Redis sessions, CSRF, organisations, memberships, onboarding, org switcher                                                                                                   | Full flow driven on the built server                           |
-| M3 catalogue         | Products, suppliers, pickup locations, payment terms, HS code lookup with official description                                                                                            | Merged and pushed                                              |
-| M6 billing           | Stripe Checkout, Billing Portal, signed webhooks, plan limits (provisional)                                                                                                               | Merged and pushed                                              |
-| Design system        | Landing page, sidebar workspace shell, Command Center home                                                                                                                                | Merged and pushed                                              |
+| Area                 | What exists                                                                                                                                                                                                              | Verified                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Engine 1.1           | Landed cost per unit, HS normalisation, tariff measures, incoterms, apportionment, assists, PVA, deferment fee, inland VAT padding; `absorbActuals` for estimate-to-actual variance                                      | 35 golden fixtures with hand calculations, property tests                                     |
+| Adapters             | UK Trade Tariff client and cache, HMRC/ECB FX, rate sheet v1, circuit breaker, SeaRates and schedules stubs, Companies House and HMRC identity checkers, object storage (R2/S3 and local)                                | Unit and contract tests on hand-authored fixtures                                             |
+| Database             | Prisma schema, migrations 0001–0008, row-level security, accepted-quote lock, tenancy client, RBAC, field encryption                                                                                                     | Tests run against Postgres 16 as superuser and as the app role                                |
+| Worker               | FX refresh, tariff warm, quote expiry, identity verification, document scan, Stripe events                                                                                                                               | Tests; runs without Redis via `--once`                                                        |
+| Phase 0 calculator   | Public calculator with tooling/assists, duty payment routing, PVA, live tariff lookup, rate limits, Turnstile, CSP                                                                                                       | Deployed on Vercel (stopgap host)                                                             |
+| M1 sign-in and shell | Magic links, Redis sessions, CSRF, organisations, memberships, onboarding, org switcher                                                                                                                                  | Full flow driven on the built server                                                          |
+| M3 catalogue         | Products, suppliers, pickup locations, payment terms, HS code lookup with official description                                                                                                                           | Merged and pushed                                                                             |
+| M6 billing           | Stripe Checkout, Billing Portal, signed webhooks, plan limits (provisional)                                                                                                                                              | Merged and pushed                                                                             |
+| Design system        | Landing page, sidebar workspace shell, Command Center home                                                                                                                                                               | Merged and pushed                                                                             |
+| M4 quote builder     | Builder with live breakdown, saved snapshots, finalise/accept/cancel, quotes list, Home widgets                                                                                                                          | Merged and pushed                                                                             |
+| M9 tracking          | Containers, milestone webhooks, per-vessel polling, lane-aware dead reckoning, MapLibre and Deck.gl map (Phase 2, started early)                                                                                         | Merged and pushed                                                                             |
+| M7 purchase orders   | Migration 0012, `PO-YYYY-NNN` numbering, editor from the catalogue, issue and freeze, deposit/balance schedule from payment terms, payments by date, "Get freight quote", one accepted quote per PO, Home "Payments due" | DB test as superuser and `harbour_app`; full gate green; curl walkthrough on the built server |
 
 ## In progress
 
@@ -27,16 +30,13 @@
 
 ## Not started
 
-| Milestone                            | Notes                                                                           |
-| ------------------------------------ | ------------------------------------------------------------------------------- |
-| M4 quote builder and Home widgets    | Needs the catalogue, now merged; quick duty check and recent-draft continuation |
-| M7 purchase orders                   | ADR-0013; needs M3 and M4                                                       |
-| M8 actual costs and variance screens | ADR-0014; the engine maths is done, the bills UI is not                         |
-| Supplier payments (ADR-0016)         | Waits on Airwallex and counsel confirmations                                    |
-| Trade finance gate                   | Waits on counsel; Companies House data captured by M2                           |
-| Phase 2 booking                      | Gated on the forwarder agreement (brief §2)                                     |
-| Passkeys and TOTP MFA                | Brief §7.1; MFA required before booking and payments                            |
-| Data export and deletion jobs        | Brief §7.3                                                                      |
+| Milestone                     | Notes                                                 |
+| ----------------------------- | ----------------------------------------------------- |
+| Supplier payments (ADR-0016)  | Waits on Airwallex and counsel confirmations          |
+| Trade finance gate            | Waits on counsel; Companies House data captured by M2 |
+| Phase 2 booking               | Gated on the forwarder agreement (brief §2)           |
+| Passkeys and TOTP MFA         | Brief §7.1; MFA required before booking and payments  |
+| Data export and deletion jobs | Brief §7.3                                            |
 
 ## Changed from the brief
 

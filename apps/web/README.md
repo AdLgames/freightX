@@ -679,3 +679,81 @@ and preview, the exact snapshot round trip, save/list/detail/Home, edit, RBAC, c
 negatives incl. a foreign product id, finalise/accept/reopen/cancel, the immutability trigger
 rendered friendly, recompute on drafts only, the 60/min and 10/min limits, the FREE plan limit,
 the quick duty check and the no-PII log rule).
+
+## Orders (M7)
+
+Purchase orders (ADR-0013) record what the organisation agreed to buy and bridge the catalogue
+(M3) and the quote builder (M4). Routes: `/app/orders` (list, `app.orders.tsx`), `/app/orders/new`
+and `/app/orders/:id/edit` (the editor, `app.orders_.new.tsx` / `app.orders_.$id_.edit.tsx`),
+`/app/orders/:id` (detail and actions, `app.orders_.$id.tsx`). Services in `app/services/orders/`
+(`orders.server.ts` persistence, `editor.server.ts` the editor's option lists and no-JS intents,
+`freight-quote.server.ts` the builder pre-fill, `schedule.ts` the pure money rules), schemas in
+`app/validators/order.ts`, components in `app/components/orders/`. Permissions: `order.view`
+(every role), `order.edit` (MEMBER and up: create, edit drafts, status moves, payment dates,
+cancel a draft), `order.issue` (OWNER/ADMIN: issue, and cancel an issued order).
+
+### Editor
+
+- Supplier (its default currency, incoterm and default pickup location are applied with
+  **Use supplier defaults** or `?supplier=<id>`), pickup location (must belong to the supplier —
+  a three-column foreign key backs this up), currency, incoterm, expected ship month
+  (`YYYY-MM`, stored as the first of the month), notes and the lines: product, quantity, unit
+  cost in the PO currency. **Add from catalogue** defaults the unit cost to the product's
+  catalogue value; a product priced in another currency is refused rather than converted
+  (change the order currency or the product). The form is flat HTML (`item_<i>_<field>`) with
+  `intent` buttons (`recalculate`, `add-item`, `remove-item`, `apply-supplier`, `save`), so it
+  works without JavaScript. Line totals are `round2(quantity × unit cost)`; the goods total is
+  their sum (`orderTotals`).
+- **Numbering.** `PO-YYYY-NNN` per organisation and UTC year, allocated inside the create
+  transaction from `po_counters` (one upsert with `RETURNING`, so two parallel creates never
+  share a number; a rolled-back create leaves a gap). The number is editable while DRAFT
+  (`PO-YYYY-NNN` form, unique per organisation). See decisions-needed (ag).
+- Purchase orders are not plan-gated (`PLAN_LIMITS` has no slot for them).
+
+### Issue, freeze and the payment schedule
+
+- **Issue** (DRAFT → ISSUED) freezes the goods total and computes the payment schedule from the
+  supplier's `PaymentTerms` at that moment (`paymentSchedule`): PREPAID → deposit 100% due on
+  issue; NET → no deposit, balance due `issuedAt + netDays`; DEPOSIT_BALANCE → deposit
+  `round2(total × pct / 100)` due on issue, balance the remainder (never a second rounding, so
+  the database CHECK `deposit + balance = total` holds), `balanceTrigger` copied and the balance
+  due date set when the trigger event is recorded (ON_SHIPMENT: when the order is marked
+  shipped). Issuing needs at least one line and payment terms on the supplier — terms are never
+  invented for money.
+- Once issued, migration 0012's triggers allow only status, the payment dates and notes to
+  change; lines cannot be added, changed or removed. The editor redirects to the detail page,
+  `updateOrder` answers `FROZEN` before touching the row, and a direct write is refused by the
+  database (`orderDbError` renders it as the same friendly message).
+- **Status** moves follow the ADR-0013 table (ISSUED → IN_PRODUCTION → READY_TO_SHIP →
+  SHIPPED → CLOSED, production skippable; anything but CLOSED/CANCELLED → CANCELLED), checked
+  in code (`canTransition`) and by the trigger. Payment is not a status.
+- **Payments.** Until the payments partner is connected (ADR-0016) the user records the deposit
+  and the balance as paid with a calendar date; the same fields will be set by the partner's
+  webhook later. Home shows the next three unpaid deposits/balances of open orders, soonest due
+  first, amounts in the PO currency and never converted (`listPaymentsDue`, `paymentsDue`).
+- **Audit** (`recordAudit`, ids, statuses, enum values and dates only — never amounts):
+  `order.create`, `order.update`, `order.issue`, `order.status`, `order.cancel`,
+  `order.payment` (kind and date).
+
+### Get freight quote
+
+`/app/quotes/new?po=<id>` pre-fills the M4 builder from the order (`builderValuesFromOrder`):
+the lines at the PO quantities with the PO unit cost and currency as hidden per-line fields
+(`line_<i>_unitCost` / `line_<i>_currency`, honoured by the pipeline instead of the catalogue
+value), the supplier, the incoterm and the route whose origin is the pickup location's port.
+The saved quote carries `purchaseOrderId` (composite FK keeps it in-tenant); several quotes may
+price one order but at most one can be ACCEPTED (partial unique index
+`quotes_one_accepted_per_po`; the route answers `PO_QUOTE_ACCEPTED`). A quote cannot be attached
+to a cancelled or closed order. FX uses the current HMRC month, and the builder notes it when the
+order's expected ship month is later.
+
+### Tests
+
+`validators/order.test.ts`, `services/orders/schedule.test.ts` (totals, the three schedules,
+the remainder rule, `paymentsDue` ordering) and `routes/orders.db.test.ts` (with `DATABASE_URL`:
+editor intents and catalogue/currency/tenant refusals, `PO-YYYY-001/002` per organisation with
+two parallel creates, create/update totals and renumbering, issue for the three term types with
+the frozen figures, the 0012 triggers rendered friendly, the status walk and illegal
+transitions, payments by date and the Home card, `?po=` pre-fill, the saved quote's
+`purchaseOrderId` and the one-accepted-quote rule, RBAC, cross-tenant negatives and the no-PII
+log rule).

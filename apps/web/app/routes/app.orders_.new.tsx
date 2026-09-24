@@ -10,8 +10,8 @@ import {
   defaultValues,
   editorReply,
   loadEditorOptions,
-  totalsView,
 } from '../services/orders/editor.server';
+import { totalsView } from '../services/orders/totals';
 import { createOrder, orderErrorMessage } from '../services/orders/orders.server';
 import { readForm } from '../services/request.server';
 import { parseOrderForm } from '../validators/order';
