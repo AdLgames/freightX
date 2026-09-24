@@ -70,12 +70,18 @@ const lineSchema = z.object({
   quantity,
   assistsGbp: optionalField(decimalString({ dp: 2, max: SANITY_MAX_MONEY })),
   preferenceClaimed: checkbox,
+  // M7 (ADR-0013): a quote built from a purchase order prices each line at the PO unit cost in
+  // the PO currency instead of the catalogue value. Both or neither (refineQuote).
+  unitCost: optionalField(decimalString({ dp: 4, max: SANITY_MAX_MONEY })),
+  currency: optionalField(z.enum(CURRENCIES, { error: 'Choose a supported currency.' })),
 });
 export type QuoteLineInput = z.infer<typeof lineSchema>;
 
 const baseShape = {
   /** Optional: pre-fills incoterm and origin port; the origin for duty is each product's. */
   supplierId: optionalField(uuidField),
+  /** M7: the purchase order this quote prices ("Get freight quote"); saved on `Quote.purchaseOrderId`. */
+  purchaseOrderId: optionalField(uuidField),
   incoterm: z.enum(INCOTERMS, { error: 'Choose an incoterm.' }),
   /** `${origin}:${destination}:${mode}` from the rate-sheet lane list. */
   lane: z.string().trim().max(30),
@@ -126,6 +132,14 @@ const refineQuote = (v: z.infer<z.ZodObject<typeof baseShape>>, ctx: z.Refinemen
   }
   const seen = new Set<string>();
   v.lines.forEach((l, i) => {
+    // M7
+    if ((l.unitCost === undefined) !== (l.currency === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['lines', i, 'unitCost'],
+        message: 'A purchase-order unit cost needs its currency, and vice versa.',
+      });
+    }
     if (seen.has(l.productId)) {
       ctx.addIssue({
         code: 'custom',
@@ -185,12 +199,16 @@ export const QUOTE_SCALAR_FIELDS = [
   'brokerMinimumGbp',
   'addProductId',
   'addQuantity',
+  'purchaseOrderId', // M7
 ] as const;
 export type QuoteScalarField = (typeof QUOTE_SCALAR_FIELDS)[number];
 
 export const LINE_FIELDS = ['productId', 'quantity', 'assistsGbp', 'preferenceClaimed'] as const;
 export type LineField = (typeof LINE_FIELDS)[number];
-export type RawLine = Record<LineField, string>;
+/** M7: per-line purchase-order cost, present only on quotes built from a PO. */
+export const PO_LINE_FIELDS = ['unitCost', 'currency'] as const;
+export type PoLineField = (typeof PO_LINE_FIELDS)[number];
+export type RawLine = Record<LineField, string> & Partial<Record<PoLineField, string>>;
 
 export interface QuoteFormValues {
   scalars: Record<string, string>;
@@ -212,12 +230,18 @@ export const readQuoteForm = (form: FormData | null): QuoteFormValues => {
   for (let i = 0; i < MAX_QUOTE_LINES; i += 1) {
     const productId = str(form, lineFieldName(i, 'productId')).trim();
     if (productId === '') continue;
-    lines.push({
+    const line: RawLine = {
       productId,
       quantity: str(form, lineFieldName(i, 'quantity')),
       assistsGbp: str(form, lineFieldName(i, 'assistsGbp')),
       preferenceClaimed: str(form, lineFieldName(i, 'preferenceClaimed')),
-    });
+    };
+    // M7: PO unit cost and currency travel as hidden fields on quotes built from a purchase order.
+    for (const f of PO_LINE_FIELDS) {
+      const v = str(form, `line_${i}_${f}`).trim();
+      if (v !== '') line[f] = v;
+    }
+    lines.push(line);
   }
   return { scalars, lines };
 };
@@ -269,12 +293,17 @@ export const builderInputToValues = (input: QuoteBuilderInput): QuoteFormValues 
       brokerMinimumGbp: input.brokerMinimumGbp ?? '',
       addProductId: '',
       addQuantity: '',
+      purchaseOrderId: input.purchaseOrderId ?? '', // M7
     },
     lines: input.lines.map((l) => ({
       productId: l.productId,
       quantity: String(l.quantity),
       assistsGbp: l.assistsGbp ?? '',
       preferenceClaimed: flag(l.preferenceClaimed),
+      // M7
+      ...(l.unitCost !== undefined && l.currency !== undefined
+        ? { unitCost: l.unitCost, currency: l.currency }
+        : {}),
     })),
   };
 };

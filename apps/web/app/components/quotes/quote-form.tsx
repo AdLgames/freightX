@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Form, Link, useFetcher } from 'react-router';
 import type { BuilderActionData, BuilderOptions } from '../../services/quotes/builder.server';
+import type { PurchaseOrderContext } from '../../services/orders/freight-quote.server'; // M7
 import type { QuoteView } from '../../services/quotes/view';
 import { INCOTERMS } from '../../validators/calculator';
 import { CURRENCIES } from '../../validators/common';
@@ -35,6 +36,8 @@ export function QuoteBuilder({
   planNotice,
   title,
   reference,
+  purchaseOrder = null, // M7
+  rateMonth = null, // M7
 }: {
   action: string;
   options: BuilderOptions;
@@ -46,6 +49,10 @@ export function QuoteBuilder({
   title: string;
   /** Existing quote's reference (edit) — null for a new quote. */
   reference: string | null;
+  /** M7: the purchase order this quote is built from (`?po=`), for the banner. */
+  purchaseOrder?: PurchaseOrderContext | null;
+  /** M7: `YYYY-MM` the pipeline converts at (HMRC monthly rate for today). */
+  rateMonth?: string | null;
 }) {
   const fetcher = useFetcher<BuilderActionData>();
   const formRef = useRef<HTMLFormElement>(null);
@@ -103,6 +110,34 @@ export function QuoteBuilder({
           />
         ) : null}
 
+        {/* M7 */}
+        {purchaseOrder ? (
+          <div className="banner notice" data-testid="po-banner">
+            <p>
+              <strong>
+                Pricing <Link to={`/app/orders/${purchaseOrder.id}`}>{purchaseOrder.poNumber}</Link>
+                .
+              </strong>{' '}
+              Quantities and unit costs come from the purchase order, in {purchaseOrder.currency};
+              weight, volume, HS code and origin from the catalogue.
+              {rateMonth
+                ? ` Duty and VAT convert at the HMRC monthly rate for ${rateMonth} (the quote's date)`
+                : ''}
+              {purchaseOrder.expectedShipMonth &&
+              rateMonth &&
+              purchaseOrder.expectedShipMonth > rateMonth
+                ? `; HMRC has not published ${purchaseOrder.expectedShipMonth} yet, so update the draft to current values once it is.`
+                : rateMonth
+                  ? '.'
+                  : ''}
+              {purchaseOrder.laneMissingFor
+                ? ` Our rate sheet has no route from ${purchaseOrder.laneMissingFor}; the nearest lane is pre-selected — check it.`
+                : ''}
+            </p>
+          </div>
+        ) : null}
+        {/* end M7 */}
+
         {formError ? (
           <div className="banner error" role="alert">
             <h2>There is a problem</h2>
@@ -128,6 +163,9 @@ export function QuoteBuilder({
           ref={formRef}
         >
           <CsrfInput />
+          {scalars.purchaseOrderId ? (
+            <input type="hidden" name="purchaseOrderId" value={scalars.purchaseOrderId} />
+          ) : null}
 
           <fieldset>
             <legend>Supplier and route</legend>
@@ -265,6 +303,13 @@ export function QuoteBuilder({
                         name={lineFieldName(i, 'productId')}
                         value={line.productId}
                       />
+                      {/* M7: PO unit cost travels with the line */}
+                      {line.unitCost && line.currency ? (
+                        <>
+                          <input type="hidden" name={`line_${i}_unitCost`} value={line.unitCost} />
+                          <input type="hidden" name={`line_${i}_currency`} value={line.currency} />
+                        </>
+                      ) : null}
                       <div className="line-head">
                         <div>
                           <strong>
@@ -291,8 +336,11 @@ export function QuoteBuilder({
                                   !
                                 </span>
                               )}{' '}
-                              · origin {p.originCountry} · {p.unitValue} {p.currency} per unit ·{' '}
-                              {p.weightKg} kg · {p.volumeCbm} CBM
+                              · origin {p.originCountry} ·{' '}
+                              {line.unitCost && line.currency
+                                ? `${line.unitCost} ${line.currency} per unit (purchase order)`
+                                : `${p.unitValue} ${p.currency} per unit`}{' '}
+                              · {p.weightKg} kg · {p.volumeCbm} CBM
                               {p.archived ? ' · archived' : ''} ·{' '}
                               <Link to={`/app/products/${p.id}`}>Edit product</Link>
                             </p>

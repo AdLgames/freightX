@@ -192,6 +192,7 @@ export const defaultValues = (
       brokerMinimumGbp: d.brokerMinimumGbp,
       addProductId: '',
       addQuantity: '',
+      purchaseOrderId: '', // M7
     },
     lines: [],
   };

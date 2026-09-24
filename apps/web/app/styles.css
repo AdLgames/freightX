@@ -2128,3 +2128,96 @@ fieldset.readonly .form-actions {
   margin: 0;
   padding-left: 20px;
 }
+
+/* ---------- M7: purchase orders ---------- */
+.status-pill.order-issued {
+  background: var(--cyan-700);
+}
+.status-pill.order-production {
+  background: var(--amber);
+}
+.status-pill.order-ready {
+  background: var(--navy-800);
+}
+.status-pill.order-shipped {
+  background: var(--link);
+}
+.order-editor .item-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.order-editor .item-total {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.order-totals {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-top: 1px solid var(--slate-200);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.order-totals strong {
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+.order-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin-bottom: 16px;
+}
+.payment-schedule dl.meta {
+  margin: 0;
+}
+.payment-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 16px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--slate-100);
+}
+.payment-row:first-of-type {
+  border-top: 0;
+}
+.payment-row .amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.payment-row form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+.payment-row form .field {
+  margin: 0;
+}
+.paid-mark {
+  color: var(--emerald-600);
+  font-weight: 700;
+}
+.due-mark {
+  color: var(--red-600);
+  font-weight: 700;
+}
+.payments-due h2 {
+  margin-top: 0;
+}
+.payments-due ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.payments-due li + li {
+  border-top: 1px solid var(--slate-100);
+}
+.payments-due .draft-row {
+  padding: 10px 0;
+}

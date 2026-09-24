@@ -12,6 +12,10 @@ import { runQuickDuty, type QuickDutyResult } from '../services/quotes/quick-dut
 import { readForm } from '../services/request.server';
 import { QUICK_DUTY_FIELDS } from '../validators/quote';
 // end M4
+// M7
+import { PaymentsDueCard } from '../components/orders/payments-due-card';
+import { listPaymentsDue } from '../services/orders/orders.server';
+// end M7
 
 /**
  * Workspace Home, the "Command Center" (docs/design-system.md). M1: the action-required banner.
@@ -32,6 +36,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
     const customsProfile = await tx.customsProfile.findFirst({
       select: { paymentMethod: true, cdsAuthorityGranted: true },
     });
+    const paymentsDue = await listPaymentsDue(tx, 3); // M7
     const [activeShipments, monthQuotes, draftQuotes, drafts] = await Promise.all([
       tx.shipment.count({ where: { status: { notIn: ['DELIVERED', 'CANCELLED'] } } }),
       tx.quote.findMany({
@@ -56,6 +61,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
     ]);
     return {
       actionsInput: { eoriNumber: org?.eoriNumber ?? null, customsProfile },
+      paymentsDue, // M7
       stats: homeStats({
         activeShipments,
         monthQuoteTotals: monthQuotes.map((q) => q.totalLandedCostExVat.toString()),
@@ -131,7 +137,7 @@ const relativeTime = (iso: string, now = Date.now()): string => {
 };
 
 export default function WorkspaceHome({ loaderData, actionData }: Route.ComponentProps) {
-  const { orgName, actions, stats, drafts } = loaderData;
+  const { orgName, actions, stats, drafts, paymentsDue } = loaderData; // M7: paymentsDue
   const quickDuty = actionData?.quickDuty ?? null; // M4
   return (
     <>
@@ -227,6 +233,9 @@ export default function WorkspaceHome({ loaderData, actionData }: Route.Componen
           result={quickDuty?.result ?? null}
         />
         {/* end M4 */}
+        {/* M7 */}
+        <PaymentsDueCard payments={paymentsDue} />
+        {/* end M7 */}
       </div>
     </>
   );

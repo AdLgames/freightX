@@ -16,9 +16,18 @@ import {
 } from '../services/quotes/builder.server';
 import { saveQuote } from '../services/quotes/quotes.server';
 import { readForm } from '../services/request.server';
-import { UUID_PATTERN, toBuilderInput } from '../validators/quote';
+import { UUID_PATTERN, readQuoteForm, toBuilderInput } from '../validators/quote';
+// M7
+import { pageError } from '../services/page-error';
+import { builderValuesFromOrder, currentRateMonth } from '../services/orders/freight-quote.server';
+import { getOrder } from '../services/orders/orders.server';
+// end M7
 
-/** New quote (M4). Needs `quote.edit`. `?supplier=<id>` pre-selects a supplier's defaults. */
+/**
+ * New quote (M4). Needs `quote.edit`. `?supplier=<id>` pre-selects a supplier's defaults.
+ * M7: `?po=<id>` pre-fills the builder from a purchase order (lines at the PO quantities and unit
+ * costs, supplier, incoterm, the pickup location's port) and the saved draft links back to it.
+ */
 
 export const meta: Route.MetaFunction = () => [{ title: 'New quote — Harbour' }];
 
@@ -31,19 +40,53 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({ formAction }) =>
 export const loader = async ({ request }: Route.LoaderArgs) => {
   const ctx = await requireOrgContext(request, { permission: 'quote.edit' });
   const url = new URL(request.url);
+  // M7
+  const po = url.searchParams.get('po');
+  if (po !== null) {
+    if (!UUID_PATTERN.test(po)) throw orderNotFound();
+    const order = await withOrg(ctx, (tx) => getOrder(tx, po));
+    if (!order) throw orderNotFound();
+    const { options } = await loadBuilderOptions(
+      ctx,
+      order.items.map((i) => i.productId),
+    );
+    const { values, context } = builderValuesFromOrder(order, options);
+    const planNotice = await savedQuotePlanNotice(ctx);
+    return {
+      options,
+      values,
+      planNotice,
+      purchaseOrder: context,
+      rateMonth: currentRateMonth(new Date()),
+    };
+  }
+  // end M7
   const { options } = await loadBuilderOptions(ctx);
   const supplier = url.searchParams.get('supplier');
   const values = defaultValues(options, supplier && UUID_PATTERN.test(supplier) ? supplier : null);
   const planNotice = await savedQuotePlanNotice(ctx);
-  return { options, values, planNotice };
+  return { options, values, planNotice, purchaseOrder: null, rateMonth: null };
 };
+
+// M7
+const orderNotFound = () =>
+  pageError(
+    404,
+    'Purchase order not found',
+    'This purchase order does not exist in your organisation.',
+  );
+// end M7
 
 export const action = async ({ request }: Route.ActionArgs) => {
   const ctx = await requireOrgContext(request, { permission: 'quote.edit' });
   const form = await readForm(request);
   await requireCsrf(request, form, ctx.session);
   const url = new URL(request.url);
-  const { options, products } = await loadBuilderOptions(ctx);
+  // M7: products a purchase order references stay quotable even if archived since.
+  const { options, products } = await loadBuilderOptions(
+    ctx,
+    readQuoteForm(form).lines.map((l) => l.productId),
+  );
   const { intent, values, errors } = applyIntent(form, url, options);
 
   const limited = await quoteRateLimit(ctx, request, values);
@@ -78,6 +121,25 @@ export const action = async ({ request }: Route.ActionArgs) => {
     );
   }
   const actor = { organizationId: ctx.org.id, userId: ctx.user.id };
+  // M7: the purchase order must exist here and still be open (the composite FK is the backstop).
+  const purchaseOrderId = computed.input.purchaseOrderId ?? null;
+  if (purchaseOrderId !== null) {
+    const order = await withOrg(ctx, (tx) =>
+      tx.purchaseOrder.findUnique({ where: { id: purchaseOrderId }, select: { status: true } }),
+    );
+    if (!order) throw orderNotFound();
+    if (order.status === 'CANCELLED' || order.status === 'CLOSED') {
+      return builderReply(
+        {
+          values,
+          view,
+          formError: `That purchase order is ${order.status.toLowerCase()}; a quote cannot be attached to it.`,
+        },
+        409,
+      );
+    }
+  }
+  // end M7
   const result = await withOrg(ctx, (tx) =>
     saveQuote(tx, actor, {
       view,
@@ -92,6 +154,7 @@ export const action = async ({ request }: Route.ActionArgs) => {
     userId: ctx.user.id,
     orgId: ctx.org.id,
     quoteId: result.id,
+    purchaseOrderId, // M7
     status: result.status,
     computedStatus: view.quote.status,
     lines: view.quote.lines.length,
@@ -114,6 +177,8 @@ export default function NewQuote({ loaderData, actionData }: Route.ComponentProp
       planNotice={actionData?.planNotice ?? loaderData.planNotice}
       title="New quote"
       reference={null}
+      purchaseOrder={loaderData.purchaseOrder} // M7
+      rateMonth={loaderData.rateMonth} // M7
     />
   );
 }

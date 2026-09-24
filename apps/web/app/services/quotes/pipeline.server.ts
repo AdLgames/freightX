@@ -9,7 +9,10 @@ import {
 import { Decimal } from 'decimal.js';
 import { DOOR_INCOTERMS, parseLaneKey } from '../../validators/calculator';
 import type { QuoteFormInput } from '../../validators/quote';
-import { productToQuoteLineSnapshot } from '../catalogue/snapshot.server';
+import {
+  productToQuoteLineSnapshot,
+  type SnapshotProduct, // M7
+} from '../catalogue/snapshot.server';
 import type { ProductRecord } from '../catalogue/products.server';
 import {
   resolveBrokerFeeTerms,
@@ -101,7 +104,12 @@ export const runCatalogueQuote = async (
 
   // ---------- resolveProducts ----------
   const byId = new Map(products.map((p) => [p.id, p]));
-  const resolved: Array<{ product: ProductRecord; line: (typeof input.lines)[number] }> = [];
+  const resolved: Array<{
+    product: ProductRecord;
+    line: (typeof input.lines)[number];
+    /** M7: the product as priced on this line — the PO unit cost/currency when given. */
+    snapshot: SnapshotProduct;
+  }> = [];
   for (const [i, l] of input.lines.entries()) {
     const product = byId.get(l.productId);
     if (!product) {
@@ -113,7 +121,13 @@ export const runCatalogueQuote = async (
         field: `line_${i}_productId`,
       };
     }
-    resolved.push({ product, line: l });
+    // M7 (ADR-0013): a quote built from a purchase order prices the line at the PO unit cost in
+    // the PO currency; weight, volume, HS code and origin still come from the catalogue.
+    const snapshot: SnapshotProduct =
+      l.unitCost !== undefined && l.currency !== undefined
+        ? { ...product, unitValue: l.unitCost, currency: l.currency }
+        : product;
+    resolved.push({ product, line: l, snapshot });
   }
   let totalWeight = new Decimal(0);
   let totalVolume = new Decimal(0);
@@ -123,14 +137,17 @@ export const runCatalogueQuote = async (
   }
   const totalWeightKg = totalWeight.toFixed(3);
   const totalVolumeCbm = totalVolume.toFixed(4);
+  const poPriced = resolved.filter((r) => r.line.unitCost !== undefined).length; // M7
   stages.push({
     stage: 'resolveProducts',
     ok: true,
-    note: `${resolved.length} line(s) from the catalogue. Shipment: ${totalWeightKg} kg, ${totalVolumeCbm} CBM.`,
+    note:
+      `${resolved.length} line(s) from the catalogue. Shipment: ${totalWeightKg} kg, ${totalVolumeCbm} CBM.` +
+      (poPriced > 0 ? ` ${poPriced} line(s) priced at the purchase-order unit cost.` : ''),
   });
 
   // ---------- resolveFx ----------
-  const currencies = [...new Set(resolved.map((r) => r.product.currency))];
+  const currencies = [...new Set(resolved.map((r) => r.snapshot.currency))]; // M7: PO currency when given
   const manual =
     input.manualFxCurrency !== undefined && input.manualFxRate !== undefined
       ? { [input.manualFxCurrency]: input.manualFxRate }
@@ -213,8 +230,8 @@ export const runCatalogueQuote = async (
   });
 
   // ---------- compute ----------
-  const lines: LineInput[] = resolved.map(({ product, line }, i) =>
-    productToQuoteLineSnapshot(product, line.quantity, {
+  const lines: LineInput[] = resolved.map(({ snapshot, line }, i) =>
+    productToQuoteLineSnapshot(snapshot, line.quantity, {
       tariff: tariffs[i]!.tariff,
       preferenceClaimed: line.preferenceClaimed,
       ...(line.assistsGbp !== undefined ? { assistsGbp: line.assistsGbp } : {}),

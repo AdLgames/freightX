@@ -13,12 +13,21 @@ export interface WorkspaceNavItem {
   /** Match only the exact path (for the index route). */
   end?: boolean;
   permission?: Action;
-  icon: 'home' | 'quotes' | 'tracking' | 'products' | 'suppliers' | 'documents' | 'settings';
+  icon:
+    | 'home'
+    | 'quotes'
+    | 'orders' // M7
+    | 'tracking'
+    | 'products'
+    | 'suppliers'
+    | 'documents'
+    | 'settings';
 }
 
 export const WORKSPACE_NAV: readonly WorkspaceNavItem[] = [
   { to: '/app', label: 'Home', end: true, icon: 'home' },
   { to: '/app/quotes', label: 'Quotes', permission: 'quote.view', icon: 'quotes' },
+  { to: '/app/orders', label: 'Orders', permission: 'order.view', icon: 'orders' }, // M7 (ADR-0013)
   { to: '/app/tracking', label: 'Tracking', icon: 'tracking' }, // M9 (ADR-0017): view for every role; tracking needs shipment.track
   { to: '/app/products', label: 'Products', icon: 'products' },
   { to: '/app/suppliers', label: 'Suppliers', icon: 'suppliers' }, // M3

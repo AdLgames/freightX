@@ -14,6 +14,7 @@ import { pageError } from '../services/page-error';
 import { QUOTE_LIMIT } from '../services/quotes/builder.server';
 import {
   QUOTE_IMMUTABLE_MESSAGE,
+  QUOTE_PO_ACCEPTED_MESSAGE, // M7
   acceptQuote,
   cancelQuote,
   getQuote,
@@ -87,6 +88,11 @@ export const loader = async ({ request, params }: Route.LoaderArgs) => {
     updatedAt: row.updatedAt.toISOString(),
     acceptedAt: row.acceptedAt?.toISOString() ?? null,
     view: quoteRowToView(row),
+    // M7: the purchase order this quote prices, when built from one.
+    purchaseOrder:
+      row.purchaseOrderId && row.purchaseOrder
+        ? { id: row.purchaseOrderId, poNumber: row.purchaseOrder.poNumber }
+        : null,
     hasBuilderInput: row.builderInput !== null,
     missing: missing.map((type) => ({ type, label: DOCUMENT_TYPE_LABELS[type] })),
     documentCount: documents.length,
@@ -178,13 +184,15 @@ export const action = async ({ request, params }: Route.ActionArgs) => {
   if (result.ok) return redirect(`/app/quotes/${row.id}?notice=${notice}`);
   if (result.error === 'NOT_FOUND') throw notFound();
   const message =
-    result.error === 'IMMUTABLE'
-      ? QUOTE_IMMUTABLE_MESSAGE
-      : result.error === 'WRONG_STATUS'
-        ? `This quote is ${result.status?.toLowerCase() ?? 'in a state that'} and cannot be ${intent === 'accept' ? 'accepted: only READY quotes can be' : intent + 'd'}.`
-        : 'message' in result
-          ? result.message
-          : 'The quote could not be updated.';
+    result.error === 'PO_QUOTE_ACCEPTED' // M7
+      ? QUOTE_PO_ACCEPTED_MESSAGE
+      : result.error === 'IMMUTABLE'
+        ? QUOTE_IMMUTABLE_MESSAGE
+        : result.error === 'WRONG_STATUS'
+          ? `This quote is ${result.status?.toLowerCase() ?? 'in a state that'} and cannot be ${intent === 'accept' ? 'accepted: only READY quotes can be' : intent + 'd'}.`
+          : 'message' in result
+            ? result.message
+            : 'The quote could not be updated.';
   return data({ error: message }, { status: 409 });
 };
 
@@ -218,6 +226,15 @@ export default function QuoteDetail({ loaderData, actionData }: Route.ComponentP
             {d.lane} · {d.view.quote.incoterm} · created {isoDateTime(d.createdAt)} · updated{' '}
             {isoDateTime(d.updatedAt)}
             {d.acceptedAt ? ` · accepted ${isoDateTime(d.acceptedAt)}` : ''}
+            {/* M7 */}
+            {d.purchaseOrder ? (
+              <>
+                {' · for '}
+                <Link to={`/app/orders/${d.purchaseOrder.id}`} className="code">
+                  {d.purchaseOrder.poNumber}
+                </Link>
+              </>
+            ) : null}
           </p>
         </div>
         <Link to="/app/quotes" className="button ghost small">

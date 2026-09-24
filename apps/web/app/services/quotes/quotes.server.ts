@@ -124,6 +124,9 @@ export const quoteSelect = {
   createdAt: true,
   updatedAt: true,
   lines: { select: quoteLineSelect, orderBy: { id: 'asc' } },
+  // M7
+  purchaseOrderId: true,
+  purchaseOrder: { select: { poNumber: true, status: true } },
 } satisfies Prisma.QuoteSelect;
 
 export type QuoteRecord = Prisma.QuoteGetPayload<{ select: typeof quoteSelect }>;
@@ -231,6 +234,7 @@ export const quoteData = (w: QuoteWrite, originCountry: string) => {
     builderInput: json(w.builderInput),
     warnings: json(q.warnings),
     calcVersion: q.calcVersion,
+    purchaseOrderId: w.builderInput.purchaseOrderId ?? null, // M7: composite FK keeps it in-tenant
   };
 };
 
@@ -464,7 +468,7 @@ export const countSavedQuotes = (tx: TenantTransactionClient): Promise<number> =
 
 // ---------- writes ----------
 
-export type QuoteWriteError = 'NOT_FOUND' | 'IMMUTABLE' | 'WRONG_STATUS';
+export type QuoteWriteError = 'NOT_FOUND' | 'IMMUTABLE' | 'WRONG_STATUS' | 'PO_QUOTE_ACCEPTED'; // M7: the purchase order already has an accepted quote
 export type QuoteWriteResult =
   | { ok: true; id: string; status: QuoteStatusValue }
   | { ok: false; error: QuoteWriteError; status?: QuoteStatusValue };
@@ -475,6 +479,10 @@ export const quoteDbError = (err: unknown): QuoteWriteError | null => {
   if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
     return 'NOT_FOUND';
   }
+  // M7: the only unique index an UPDATE of quotes can violate is quotes_one_accepted_per_po.
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+    return 'PO_QUOTE_ACCEPTED';
+  }
   const message = err instanceof Error ? err.message : '';
   if (/ACCEPTED and immutable/.test(message)) return 'IMMUTABLE';
   return null;
@@ -482,6 +490,10 @@ export const quoteDbError = (err: unknown): QuoteWriteError | null => {
 
 export const QUOTE_IMMUTABLE_MESSAGE =
   'This quote has been accepted and can no longer be changed. Cancel it and create a new quote if the shipment has changed.';
+
+// M7
+export const QUOTE_PO_ACCEPTED_MESSAGE =
+  'This purchase order already has an accepted quote. Cancel that quote first if this one should replace it.';
 
 const audit = (
   tx: TenantTransactionClient,
