@@ -72,6 +72,10 @@ describe('schema ↔ allow-lists', () => {
         'pickup_locations',
         'payment_terms',
         'payout_methods',
+        // M7 (ADR-0013)
+        'purchase_orders',
+        'purchase_order_items',
+        'po_counters',
       ].sort(),
     );
   });
@@ -501,5 +505,127 @@ describe('0010_tracking', () => {
     }
     expect(handWritten).not.toMatch(/CREATE FUNCTION/); // only CREATE OR REPLACE
     expect(handWritten).not.toMatch(/CREATE TRIGGER/);
+  });
+});
+
+// M7 (ADR-0013)
+describe('0012_purchase_orders', () => {
+  const sql = readMigration('0012_purchase_orders');
+  const [generated = '', handWritten = ''] = sql.split('Part 2 — hand-written');
+
+  it('is additive: the status enum, three tenant tables, quotes.purchase_order_id and the composite FKs', () => {
+    expect(generated).toContain(
+      `CREATE TYPE "purchase_order_status" AS ENUM ('DRAFT', 'ISSUED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'CLOSED', 'CANCELLED');`,
+    );
+    for (const table of ['purchase_orders', 'purchase_order_items', 'po_counters']) {
+      expect(generated).toContain(`CREATE TABLE "${table}"`);
+    }
+    expect(generated).toMatch(/ALTER TABLE "quotes" ADD COLUMN\s+"purchase_order_id" UUID;/);
+    // Money: Decimal(14,4) unit costs, Decimal(14,2) totals, Decimal(5,2) percent (ADR-0013).
+    expect(generated).toContain('"unit_cost" DECIMAL(14,4) NOT NULL');
+    expect(generated).toContain('"line_total" DECIMAL(14,2) NOT NULL');
+    expect(generated).toContain('"total_goods_value" DECIMAL(14,2) NOT NULL DEFAULT 0');
+    expect(generated).toContain('"deposit_pct" DECIMAL(5,2)');
+    expect(generated).toContain('"expected_ship_month" DATE');
+    // Composite tenant FKs.
+    expect(generated).toContain(
+      'FOREIGN KEY ("supplier_id", "organization_id") REFERENCES "suppliers"("id", "organization_id")',
+    );
+    expect(generated).toContain(
+      'FOREIGN KEY ("pickup_location_id", "supplier_id", "organization_id") REFERENCES "pickup_locations"("id", "supplier_id", "organization_id")',
+    );
+    expect(generated).toContain(
+      'ALTER TABLE "purchase_order_items" ADD CONSTRAINT "purchase_order_items_purchase_order_id_organization_id_fkey" FOREIGN KEY ("purchase_order_id", "organization_id") REFERENCES "purchase_orders"("id", "organization_id") ON DELETE CASCADE ON UPDATE CASCADE;',
+    );
+    expect(generated).toContain(
+      'FOREIGN KEY ("product_id", "organization_id") REFERENCES "products"("id", "organization_id")',
+    );
+    expect(generated).toContain(
+      'ALTER TABLE "quotes" ADD CONSTRAINT "quotes_purchase_order_id_organization_id_fkey" FOREIGN KEY ("purchase_order_id", "organization_id") REFERENCES "purchase_orders"("id", "organization_id") ON DELETE RESTRICT ON UPDATE CASCADE;',
+    );
+    expect(generated).toContain(
+      'CREATE UNIQUE INDEX "purchase_orders_organization_id_po_number_key" ON "purchase_orders"("organization_id", "po_number");',
+    );
+    expect(generated).toContain(
+      'CREATE UNIQUE INDEX "po_counters_organization_id_year_key" ON "po_counters"("organization_id", "year");',
+    );
+    const statements = sql.replace(/--[^\n]*/g, '');
+    expect(statements).not.toMatch(/\bDROP (COLUMN|TABLE|TYPE)\b/);
+    expect(statements).not.toMatch(/\bRENAME\b|ALTER COLUMN/);
+  });
+
+  it('installs the CHECKs, the one-accepted-quote-per-PO partial index and the triggers', () => {
+    expect(handWritten).toContain("CHECK (po_number ~ '^PO-[0-9]{4}-[0-9]{3,}$')");
+    expect(handWritten).toContain("CHECK (currency ~ '^[A-Z]{3}$')");
+    expect(handWritten).toContain(
+      'CHECK (deposit_pct IS NULL OR (deposit_pct >= 0 AND deposit_pct <= 100))',
+    );
+    expect(handWritten).toContain(
+      'CHECK (deposit_amount IS NULL OR balance_amount IS NULL OR deposit_amount + balance_amount = total_goods_value)',
+    );
+    expect(handWritten).toContain(
+      "CHECK (status IN ('DRAFT', 'CANCELLED') OR issued_at IS NOT NULL)",
+    );
+    expect(handWritten).toContain(
+      'CHECK (expected_ship_month IS NULL OR EXTRACT(DAY FROM expected_ship_month) = 1)',
+    );
+    expect(handWritten).toContain('CHECK (quantity > 0)');
+    expect(handWritten).toContain('CHECK (unit_cost >= 0 AND line_total >= 0)');
+    expect(handWritten).toMatch(
+      /CREATE UNIQUE INDEX quotes_one_accepted_per_po\s+ON "quotes" \("purchase_order_id"\) WHERE status = 'ACCEPTED';/,
+    );
+    expect(handWritten).toMatch(
+      /CREATE TRIGGER purchase_orders_guard\s+BEFORE UPDATE OR DELETE ON "purchase_orders"/,
+    );
+    expect(handWritten).toMatch(
+      /CREATE TRIGGER purchase_order_items_frozen\s+BEFORE INSERT OR UPDATE OR DELETE ON "purchase_order_items"/,
+    );
+    // The frozen-row comparison strips exactly status, the payment dates, notes and updated_at.
+    expect(handWritten).toContain(
+      "(to_jsonb(OLD) - 'status' - 'deposit_due_at' - 'deposit_paid_at' - 'balance_due_at' - 'balance_paid_at' - 'notes' - 'updated_at')",
+    );
+    // The ADR-0013 transition table.
+    for (const move of [
+      'DRAFT>ISSUED',
+      'ISSUED>IN_PRODUCTION',
+      'ISSUED>READY_TO_SHIP',
+      'IN_PRODUCTION>READY_TO_SHIP',
+      'READY_TO_SHIP>SHIPPED',
+      'SHIPPED>CLOSED',
+    ]) {
+      expect(handWritten).toContain(`'${move}'`);
+    }
+    expect(handWritten).toContain(
+      "(NEW.status = 'CANCELLED' AND OLD.status NOT IN ('CLOSED', 'CANCELLED'))",
+    );
+  });
+
+  it('installs RLS and grants for the three tables', () => {
+    for (const table of ['purchase_orders', 'purchase_order_items', 'po_counters']) {
+      expect(handWritten).toContain(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(handWritten).toContain(`ALTER TABLE "${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(handWritten).toMatch(new RegExp(`CREATE POLICY ${table}_tenant ON "${table}"`));
+      expect(handWritten).toContain(
+        `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "${table}" TO harbour_app;`,
+      );
+    }
+    expect(sql).toMatch(/## Rollback/);
+    expect(sql).toMatch(/Reversible: yes/);
+  });
+
+  it('the hand-written part is idempotent', () => {
+    for (const m of handWritten.matchAll(/ADD CONSTRAINT (\w+)/g)) {
+      expect(handWritten).toContain(`DROP CONSTRAINT IF EXISTS ${m[1]};`);
+    }
+    for (const m of handWritten.matchAll(/CREATE POLICY (\w+) ON "(\w+)"/g)) {
+      expect(handWritten).toContain(`DROP POLICY IF EXISTS ${m[1]} ON "${m[2]}";`);
+    }
+    for (const m of handWritten.matchAll(/CREATE TRIGGER (\w+)\s+BEFORE [A-Z ]+ ON "(\w+)"/g)) {
+      expect(handWritten).toContain(`DROP TRIGGER IF EXISTS ${m[1]} ON "${m[2]}";`);
+    }
+    for (const m of handWritten.matchAll(/CREATE UNIQUE INDEX (\w+)/g)) {
+      expect(handWritten).toContain(`DROP INDEX IF EXISTS ${m[1]};`);
+    }
+    expect(handWritten).not.toMatch(/CREATE FUNCTION/); // only CREATE OR REPLACE
   });
 });

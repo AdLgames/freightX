@@ -26,6 +26,11 @@ export const ACTIONS = [
   'org.company.confirm',
   'audit.view',
   'shipment.track', // M9: track a container / add a manual milestone (not booking — that stays gated)
+  // M7 (ADR-0013): purchase orders. Viewing mirrors quote.view, editing drafts / moving status /
+  // recording payment dates mirrors quote.edit, issuing (which freezes money) mirrors quote.accept.
+  'order.view',
+  'order.edit',
+  'order.issue',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -50,6 +55,10 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   'org.company.confirm': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'audit.view': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'shipment.track': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false }, // M9
+  // M7
+  'order.view': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: true },
+  'order.edit': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false },
+  'order.issue': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
 };
 
 export class ForbiddenError extends Error {

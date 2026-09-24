@@ -137,6 +137,7 @@ export {
   PayoutMethodType,
   ContainerSizeType, // M9
   VesselPollState, // M9
+  PurchaseOrderStatus, // M7 (ADR-0013)
 } from '../generated/client/index.js';
 export type {
   PrismaClient,
@@ -169,4 +170,8 @@ export type {
   Container, // M9
   ActiveVessel, // M9
   Port, // M9
+  // M7 (ADR-0013)
+  PurchaseOrder,
+  PurchaseOrderItem,
+  PoCounter,
 } from '../generated/client/index.js';

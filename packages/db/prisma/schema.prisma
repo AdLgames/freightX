@@ -72,22 +72,26 @@ model Organization {
   companiesHouseCheckedAt DateTime?          @map("companies_house_checked_at")
   companiesHouseName      String?            @map("companies_house_name")
 
-  members         Membership[]
-  invitations     Invitation[] // M2 (NEW vs brief) pending and historical invitations
-  products        Product[]
-  suppliers       Supplier[]
-  quotes          Quote[]
-  quoteLines      QuoteLine[] // (NEW vs brief) inverse of the denormalised QuoteLine.organizationId
-  shipments       Shipment[]
-  shipmentEvents  ShipmentEvent[] // (NEW vs brief) inverse of the denormalised ShipmentEvent.organizationId
-  documents       Document[] // (NEW vs brief) inverse of Document.organizationId
-  auditLogs       AuditLog[]
-  customsProfile  CustomsProfile? // (NEW vs brief) 1:1 customs/payment routing settings (§6.1 Phase 2 preconditions)
+  members            Membership[]
+  invitations        Invitation[] // M2 (NEW vs brief) pending and historical invitations
+  products           Product[]
+  suppliers          Supplier[]
+  quotes             Quote[]
+  quoteLines         QuoteLine[] // (NEW vs brief) inverse of the denormalised QuoteLine.organizationId
+  shipments          Shipment[]
+  shipmentEvents     ShipmentEvent[] // (NEW vs brief) inverse of the denormalised ShipmentEvent.organizationId
+  documents          Document[] // (NEW vs brief) inverse of Document.organizationId
+  auditLogs          AuditLog[]
+  customsProfile     CustomsProfile? // (NEW vs brief) 1:1 customs/payment routing settings (§6.1 Phase 2 preconditions)
   // M3 (ADR-0012): inverses of the denormalised organizationId on the supplier sub-entities
-  pickupLocations PickupLocation[]
-  paymentTerms    PaymentTerms[]
-  payoutMethods   PayoutMethod[]
-  containers      Container[] // M9 (ADR-0017) inverse of Container.organizationId
+  pickupLocations    PickupLocation[]
+  paymentTerms       PaymentTerms[]
+  payoutMethods      PayoutMethod[]
+  containers         Container[] // M9 (ADR-0017) inverse of Container.organizationId
+  // M7 (ADR-0013): inverses of the denormalised organizationId on purchase orders
+  purchaseOrders     PurchaseOrder[]
+  purchaseOrderItems PurchaseOrderItem[]
+  poCounters         PoCounter[]
 
   @@map("organizations")
 }
@@ -321,6 +325,7 @@ model Supplier {
   pickupLocations PickupLocation[]
   paymentTerms    PaymentTerms?
   payoutMethods   PayoutMethod[]
+  purchaseOrders  PurchaseOrder[] // M7 (ADR-0013)
 
   @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from products (keeps denormalised org ids consistent)
   @@index([organizationId])
@@ -350,9 +355,11 @@ model PickupLocation {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  supplier     Supplier     @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  supplier       Supplier        @relation(fields: [supplierId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[] // M7 (ADR-0013)
 
+  @@unique([id, supplierId, organizationId]) // M7: target of the composite FK from purchase_orders — a PO's pickup location must belong to the PO's supplier and tenant
   @@index([organizationId])
   @@index([supplierId])
   @@map("pickup_locations")
@@ -466,11 +473,12 @@ model Product {
   preferenceEligible Boolean   @default(false) @map("preference_eligible") // informational: any 142 measure existed at lookup; the engine decides per origin
   archivedAt         DateTime? @map("archived_at") // archive instead of delete: quote lines reference products
 
-  organization Organization @relation(fields: [organizationId], references: [id])
+  organization       Organization        @relation(fields: [organizationId], references: [id])
   // (NEW vs brief) composite FK (supplier_id, organization_id) → suppliers(id, organization_id):
   // a product can never point at another tenant's supplier, whatever the app layer does.
-  supplier     Supplier?    @relation(fields: [supplierId, organizationId], references: [id, organizationId])
-  quoteLines   QuoteLine[]
+  supplier           Supplier?           @relation(fields: [supplierId, organizationId], references: [id, organizationId])
+  quoteLines         QuoteLine[]
+  purchaseOrderItems PurchaseOrderItem[] // M7 (ADR-0013)
 
   @@unique([organizationId, sku])
   @@unique([id, organizationId]) // (NEW vs brief) target of the composite FK from quote_lines
@@ -564,6 +572,10 @@ model Quote {
   // strings) so a DRAFT can be reopened in the builder. Never read for money: every figure comes
   // from the snapshot columns above. Null for quotes not created by the builder.
   builderInput         Json?          @map("builder_input")
+  // M7 (ADR-0013, migration 0012): the purchase order this quote prices, when it was built from
+  // one ("Get freight quote"). Optional — quotes without a PO stay possible. At most one ACCEPTED
+  // quote per PO (partial unique index quotes_one_accepted_per_po, hand-written in 0012).
+  purchaseOrderId      String?        @map("purchase_order_id") @db.Uuid
 
   warnings    Json // array of {code, message} e.g. ADD_APPLIES, HS_UNVERIFIED
   calcVersion String    @map("calc_version") // engine version that produced this quote
@@ -571,14 +583,18 @@ model Quote {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  lines        QuoteLine[]
-  shipment     Shipment?
-  documents    Document[] // (NEW vs brief, M5) inverse of Document.quoteId — documents attached before a shipment exists
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  lines         QuoteLine[]
+  shipment      Shipment?
+  documents     Document[] // (NEW vs brief, M5) inverse of Document.quoteId — documents attached before a shipment exists
+  // M7: composite FK — a quote can only be linked to its own tenant's purchase order. Restrict:
+  // purchase orders are cancelled, never deleted, once a quote references them.
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
   @@unique([id, organizationId]) // (NEW vs brief) target of composite FKs from quote_lines and shipments
   @@index([organizationId, status])
   @@index([organizationId, validUntil]) // (NEW vs brief) hourly expiry job (§5.8) scans by validUntil
+  @@index([organizationId, purchaseOrderId]) // M7: "quotes for this purchase order"
   @@map("quotes")
 }
 
@@ -636,6 +652,110 @@ model QuoteLine {
   @@index([organizationId]) // (NEW vs brief) RLS / tenant scoping
   @@index([quoteId])
   @@map("quote_lines")
+}
+
+// ---------- M7 (ADR-0013): purchase orders ----------
+// What the importer agreed to buy: supplier, products, quantities, unit prices and payment terms.
+// Money is in the PO CURRENCY (unit costs Decimal(14,4), totals Decimal(14,2)); nothing here is in
+// GBP — FX happens on the quote built from the PO. Rules in migration 0012 (hand-written part):
+//   * po_number `PO-YYYY-NNN`, unique per organisation, from po_counters (one row per org + year)
+//   * status transitions checked by trigger: DRAFT→ISSUED→IN_PRODUCTION→READY_TO_SHIP→SHIPPED→CLOSED,
+//     ISSUED→READY_TO_SHIP (production may be skipped), any status but CLOSED/CANCELLED→CANCELLED
+//   * once a PO is not DRAFT only status, the paid-at/due-at dates, notes and updated_at may change;
+//     its items are frozen (same to_jsonb technique as the accepted-quote trigger, 0002)
+//   * payment is NOT a status: deposit/balance amounts are computed from the supplier's PaymentTerms
+//     when the PO is issued and frozen; the paid-at dates are set by the user (later: the payments
+//     partner's webhook, ADR-0016)
+
+// Additive only (§4 migration rules).
+enum PurchaseOrderStatus {
+  DRAFT
+  ISSUED
+  IN_PRODUCTION
+  READY_TO_SHIP
+  SHIPPED
+  CLOSED
+  CANCELLED
+
+  @@map("purchase_order_status")
+}
+
+model PurchaseOrder {
+  id                String              @id @default(uuid()) @db.Uuid
+  organizationId    String              @map("organization_id") @db.Uuid
+  poNumber          String              @map("po_number") // PO-2026-001; CHECK format in 0012
+  supplierId        String              @map("supplier_id") @db.Uuid
+  pickupLocationId  String?             @map("pickup_location_id") @db.Uuid // origin port for "get freight quote"
+  status            PurchaseOrderStatus @default(DRAFT)
+  currency          String // ISO 4217, copied from the supplier's default and editable while DRAFT
+  incoterm          Incoterm
+  totalGoodsValue   Decimal             @default(0) @map("total_goods_value") @db.Decimal(14, 2) // sum of item line totals, PO currency; frozen on issue
+  depositPct        Decimal?            @map("deposit_pct") @db.Decimal(5, 2) // percent convention ("30.00" = 30%); set on issue from PaymentTerms
+  depositAmount     Decimal?            @map("deposit_amount") @db.Decimal(14, 2)
+  depositDueAt      DateTime?           @map("deposit_due_at")
+  depositPaidAt     DateTime?           @map("deposit_paid_at")
+  balanceAmount     Decimal?            @map("balance_amount") @db.Decimal(14, 2)
+  balanceTrigger    BalanceTrigger?     @map("balance_trigger") // copied from PaymentTerms on issue (DEPOSIT_BALANCE)
+  balanceDueAt      DateTime?           @map("balance_due_at")
+  balancePaidAt     DateTime?           @map("balance_paid_at")
+  expectedShipMonth DateTime?           @map("expected_ship_month") @db.Date // first day of the month (CHECK); the HMRC rate month the quote should use once published
+  issuedAt          DateTime?           @map("issued_at")
+  notes             String?
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  // Composite FKs: the supplier and the pickup location must belong to this tenant, and the
+  // pickup location to this supplier (three-column FK).
+  supplier       Supplier            @relation(fields: [supplierId, organizationId], references: [id, organizationId])
+  pickupLocation PickupLocation?     @relation(fields: [pickupLocationId, supplierId, organizationId], references: [id, supplierId, organizationId])
+  items          PurchaseOrderItem[]
+  quotes         Quote[]
+
+  @@unique([organizationId, poNumber])
+  @@unique([id, organizationId]) // target of the composite FKs from purchase_order_items and quotes
+  @@index([organizationId, status])
+  @@index([supplierId])
+  @@map("purchase_orders")
+}
+
+// One product line of a PO. SKU and name are snapshots (the catalogue may change); weight, volume,
+// HS code and origin are deliberately NOT frozen here — they are snapshotted onto QuoteLine when a
+// quote is built (ADR-0013). Frozen once the PO leaves DRAFT (trigger, 0012).
+model PurchaseOrderItem {
+  id              String  @id @default(uuid()) @db.Uuid
+  organizationId  String  @map("organization_id") @db.Uuid
+  purchaseOrderId String  @map("purchase_order_id") @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  position        Int // display order, 0-based
+  quantity        Int
+  unitCost        Decimal @map("unit_cost") @db.Decimal(14, 4) // PO currency
+  lineTotal       Decimal @map("line_total") @db.Decimal(14, 2) // round2(quantity × unitCost)
+  sku             String // snapshot
+  name            String // snapshot
+
+  organization  Organization  @relation(fields: [organizationId], references: [id])
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  product       Product       @relation(fields: [productId, organizationId], references: [id, organizationId])
+
+  @@index([organizationId])
+  @@index([purchaseOrderId])
+  @@map("purchase_order_items")
+}
+
+// Per-organisation, per-year PO number counter. `next` is the next NNN to hand out; the create
+// transaction does `INSERT ... ON CONFLICT DO UPDATE SET next = next + 1 RETURNING` so concurrent
+// creates serialise on the row and never share a number. Tenant table (RLS) like the others.
+model PoCounter {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  year           Int
+  next           Int    @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, year])
+  @@map("po_counters")
 }
 
 // ---------- Execution (Phase 2) ----------
