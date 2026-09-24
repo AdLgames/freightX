@@ -55,6 +55,7 @@ describe('schema ↔ allow-lists', () => {
     expect(Object.values(TENANT_TABLES).sort()).toEqual(
       [
         'audit_logs',
+        'containers', // M9
         'customs_profiles',
         'documents',
         'invitations', // M2
@@ -375,6 +376,118 @@ describe('0007_supplier_entities', () => {
       );
     }
   });
+});
+
+// M9
+describe('0010_tracking', () => {
+  const sql = readMigration('0010_tracking');
+  const [, handWritten = ''] = sql.split('Part 2 — hand-written');
+
+  it('is additive: new tables, nullable columns, enums; quote_id relaxed to nullable', () => {
+    expect(sql).toContain(
+      `CREATE TYPE "container_size_type" AS ENUM ('C20GP', 'C40GP', 'C40HC', 'C45HC');`,
+    );
+    expect(sql).toContain(
+      `CREATE TYPE "vessel_poll_state" AS ENUM ('AT_SEA', 'COASTAL', 'APPROACHING', 'DOCKED', 'STALE');`,
+    );
+    expect(sql).toContain('CREATE TABLE "containers"');
+    expect(sql).toContain('CREATE TABLE "active_vessels"');
+    expect(sql).toContain('CREATE TABLE "ports"');
+    expect(sql).toContain('ALTER COLUMN "quote_id" DROP NOT NULL');
+    for (const col of [
+      'container_id',
+      'location_locode',
+      'location_name',
+      'latitude',
+      'longitude',
+      'vessel_imo',
+      'payload_sha256',
+    ]) {
+      expect(sql).toMatch(new RegExp(`ADD COLUMN\\s+"${col}"`));
+    }
+    // Idempotency key becomes per organisation (fan-out to every tenant tracking a number).
+    expect(sql).toContain('DROP INDEX "shipment_events_source_provider_event_id_key";');
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "shipment_events_organization_id_source_provider_event_id_key"',
+    );
+    const statements = sql.replace(/--[^\n]*/g, '');
+    expect(statements).not.toMatch(/\bDROP (COLUMN|TABLE|TYPE)\b/);
+    expect(statements).not.toMatch(/\bRENAME\b/);
+    expect(statements).not.toMatch(/SET NOT NULL/);
+  });
+
+  it('composite tenant FKs on containers and shipment_events.container_id', () => {
+    expect(sql).toContain(
+      'FOREIGN KEY ("shipment_id", "organization_id") REFERENCES "shipments"("id", "organization_id")',
+    );
+    expect(sql).toContain(
+      'FOREIGN KEY ("container_id", "organization_id") REFERENCES "containers"("id", "organization_id")',
+    );
+  });
+
+  it('installs the format CHECKs and the RLS block for containers', () => {
+    expect(handWritten).toContain("CHECK (container_number ~ '^[A-Z]{4}[0-9]{7}$')");
+    expect(handWritten).toContain("CHECK (imo ~ '^[0-9]{7}$')");
+    expect(handWritten).toContain("CHECK (locode ~ '^[A-Z]{2}[A-Z0-9]{3}$')");
+    expect(handWritten).toContain('CHECK (active_container_count >= 0)');
+    expect(handWritten).toContain('ALTER TABLE "containers" ENABLE ROW LEVEL SECURITY;');
+    expect(handWritten).toContain('ALTER TABLE "containers" FORCE ROW LEVEL SECURITY;');
+    expect(handWritten).toMatch(/CREATE POLICY containers_tenant ON "containers"/);
+  });
+
+  it('the cross-tenant lookups are narrow, setting-gated SELECT policies', () => {
+    expect(handWritten).toMatch(
+      /CREATE POLICY containers_tracking_lookup ON "containers" FOR SELECT\s+USING \(app_tracking_container\(\) IS NOT NULL AND container_number = app_tracking_container\(\)\)/,
+    );
+    expect(handWritten).toMatch(
+      /CREATE POLICY shipments_tracking_sweep ON "shipments" FOR SELECT\s+USING \(app_tracking_sweep\(\) AND tracking_request_ref IS NOT NULL\)/,
+    );
+    expect(handWritten).toMatch(
+      /CREATE POLICY shipment_events_tracking_sweep ON "shipment_events" FOR SELECT/,
+    );
+    expect(handWritten).toContain("NULLIF(current_setting('app.tracking_container', true), '')");
+    expect(handWritten).toContain("current_setting('app.tracking_sweep', true) = 'on'");
+  });
+
+  it('grants: containers full, ports read-only, active_vessels no DELETE (role split TODO noted)', () => {
+    expect(handWritten).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "containers" TO harbour_app;',
+    );
+    expect(handWritten).toContain('GRANT SELECT ON TABLE "ports" TO harbour_app;');
+    expect(handWritten).toContain(
+      'REVOKE INSERT, UPDATE, DELETE ON TABLE "ports" FROM harbour_app;',
+    );
+    expect(handWritten).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "active_vessels" TO harbour_app;',
+    );
+    expect(handWritten).toContain('REVOKE DELETE ON TABLE "active_vessels" FROM harbour_app;');
+    expect(sql).toMatch(/TODO — split app\/worker roles/);
+  });
+
+  it('seeds the Port table with the rate-sheet ports and the choke points', () => {
+    for (const locode of [
+      'CNSHA',
+      'CNNGB',
+      'CNSZX',
+      'INNSA',
+      'TRIST',
+      'GBFXT',
+      'GBSOU',
+      'GBLGP',
+      'SGSIN',
+      'EGSUZ',
+      'EGPSD',
+      'MYPKG',
+      'AEJEA',
+      'NLRTM',
+      'DEHAM',
+      'BEANR',
+      'LKCMB',
+    ]) {
+      expect(handWritten, locode).toMatch(new RegExp(`\\('${locode}',`));
+    }
+    expect(handWritten).toContain('ON CONFLICT (locode) DO NOTHING;');
+  });
 
   it('the hand-written part is idempotent', () => {
     for (const m of handWritten.matchAll(/ADD CONSTRAINT (\w+)/g)) {
@@ -386,5 +499,7 @@ describe('0007_supplier_entities', () => {
     for (const m of handWritten.matchAll(/CREATE UNIQUE INDEX (\w+)/g)) {
       expect(handWritten).toContain(`DROP INDEX IF EXISTS ${m[1]};`);
     }
+    expect(handWritten).not.toMatch(/CREATE FUNCTION/); // only CREATE OR REPLACE
+    expect(handWritten).not.toMatch(/CREATE TRIGGER/);
   });
 });

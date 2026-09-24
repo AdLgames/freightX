@@ -139,6 +139,7 @@ const startWorker = async (): Promise<void> => {
           attempt: job.attemptsMade + 1,
         });
         return wiring.runJob(name, job.data); // M5/M2: on-demand queues read the job data
+        return wiring.runJob(name, job.data); // M9: event-driven queues carry their payload
       },
       { connection, concurrency: 1 },
     );

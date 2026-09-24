@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_JOB_OPTIONS,
   ON_DEMAND_QUEUE_NAMES, // M2
+  EVENT_DRIVEN_QUEUES,
   QUEUE_NAMES,
   SCHEDULES,
   isQueueName,
@@ -72,6 +73,7 @@ describe('scheduleRepeatables', () => {
         continue;
       }
       if ((ON_DEMAND_QUEUE_NAMES as readonly string[]).includes(name)) continue; // M2: no cron
+      if (EVENT_DRIVEN_QUEUES.includes(name)) continue; // M9: fed by producers, no schedule
       expect(SCHEDULES[name].length).toBeGreaterThan(0);
       for (const s of SCHEDULES[name]) expect(s.id.startsWith(`${name}:`)).toBe(true);
     }

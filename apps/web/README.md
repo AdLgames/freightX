@@ -419,6 +419,57 @@ Tests: `validators/settings.test.ts`, `services/settings/*.test.ts` (enqueuer, s
 confirmation, the invitation flow incl. expiry/revoke/wrong address, role rules, member removal
 signing out, cross-tenant negatives and the no-PII log snapshot).
 
+## Tracking (M9)
+
+Phase 2 tracking, started early at the founder's request and **read-only**: booking stays gated
+(brief §2). Design: `docs/adr/0017-shipment-tracking-design.md`.
+
+- `/app/tracking` — the organisation's shipments (containers, last milestone, Carrier ETA, status)
+  and the "Track a container" form (reference, container number(s) with ISO 6346 check digit,
+  master bill, origin/destination from the `Port` table, optional quote). Permission
+  `shipment.track` (OWNER/ADMIN/MEMBER); every role may view. Audit `shipment.track` /
+  `shipment.untrack`. List and form work without JavaScript.
+- `/app/tracking/:id` — timeline (`ShipmentEvent`, newest first, no JavaScript needed),
+  containers, vessel card (speed, heading, last position time and source, "Carrier ETA" — the
+  provider's, never ours), the manual-milestone form (source `MANUAL`) and the map.
+- `/app/api/map-state[?shipmentId=]` — JSON, org-scoped through the session, 60/min per user. Per
+  active container: the last real AIS ping (`positionSource`), a server-side dead-reckoned
+  position along the matching shipping lane (`method: lane | heading`, `capped`), the uncertainty
+  radius (2 km + 5 % of distance travelled), `actualPath` (event coordinates + real ping, solid)
+  and `expectedPath` (lane path to the destination, dashed). Extrapolation stops at the poll
+  interval + 2 h and STALE/DOCKED vessels are shown as "last seen". Nothing extrapolated is stored.
+- `POST /webhooks/tracking/:providerId` — brief §6.4: 256 KB limit (413), HMAC verified in the
+  adapter (401), 5-minute replay window (401), malformed 400, unknown provider 404, secret unset
+  503; events go to the BullMQ queue `tracking-events` with `REDIS_URL`, otherwise they are
+  processed inline (logged). React Router's own Origin check does not apply: providers send no
+  `Origin` header.
+
+**Map.** MapLibre GL (basemap, dashed expected route) + deck.gl (`ScatterplotLayer` uncertainty,
+`IconLayer` inline-SVG ship, `PathLayer` actual route), lazy-loaded on the detail route only
+(`components/tracking/tracking-map.tsx` renders a placeholder on the server and imports
+`tracking-map.client.tsx` after hydration — its own chunk). The browser advances the server's
+reckoned position with `app/lib/kinematics-client.ts` (a tested copy of the engine formulas so
+the chunk does not pull in the engine), refetches `/app/api/map-state` every 60 s and glides to
+the new position. Tiles: `MAP_STYLE_URL` (default OpenFreeMap Liberty, keyless); MapTiler or a
+Mapbox style work the same way with their key in the URL — read in the loader, never in client
+code — plus `MAP_TILE_ORIGINS` for extra hosts. The route's `headers()` adds `connect-src` and
+`img-src` for those origins, `img-src data: blob:` and `worker-src blob:` through
+`services/security-headers.server.ts` (`x-harbour-csp-additions`, consumed and removed by
+`applySecurityHeaders`); `script-src` cannot be widened and the global policy is unchanged. If a
+browser reports a `style-src` violation from MapLibre, add it in
+`services/tracking/csp.server.ts`, not globally.
+
+**Providers** (`packages/adapters/src/tracking`, decision (ae)): `TRACKING_MILESTONE_PROVIDER`
+`terminal49 | none` (`TERMINAL49_API_KEY`, `TERMINAL49_WEBHOOK_SECRET`) and
+`TRACKING_POSITION_PROVIDER` `spire | marinetraffic | none` (`SPIRE_API_TOKEN`,
+`MARINETRAFFIC_API_KEY`). All three adapters are shaped on public documentation with
+hand-authored fixtures and every path, header, event name and field marked **TO CONFIRM**; they
+must be checked against the live APIs and a sandbox before being enabled. With `none` the UI says
+"Tracking provider not configured — events can be added manually" and everything else works.
+
+Worker side (`apps/worker`): `vessel-poll` (hourly sweep, per-vessel intervals), `tracking-poll`
+(6-hourly milestone fallback) and `tracking-events` (webhook consumer).
+
 ## Phase 1 TODO (not built — brief §2, §7)
 
 - Auth: passkeys (WebAuthn), optional TOTP.

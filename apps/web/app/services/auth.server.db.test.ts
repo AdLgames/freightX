@@ -296,6 +296,7 @@ describe.skipIf(!DATABASE_URL)('tenancy-aware loaders (database)', () => {
         '/app/products',
         '/app/suppliers', // M3
         '/app/documents',
+        '/app/tracking', // M9
         '/app/settings',
       ]);
     });

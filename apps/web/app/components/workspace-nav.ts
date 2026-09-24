@@ -19,6 +19,7 @@ export interface WorkspaceNavItem {
 export const WORKSPACE_NAV: readonly WorkspaceNavItem[] = [
   { to: '/app', label: 'Home', end: true, icon: 'home' },
   { to: '/app/quotes', label: 'Quotes', permission: 'quote.view', icon: 'quotes' },
+  { to: '/app/tracking', label: 'Tracking', icon: 'tracking' }, // M9 (ADR-0017): view for every role; tracking needs shipment.track
   { to: '/app/products', label: 'Products', icon: 'products' },
   { to: '/app/suppliers', label: 'Suppliers', icon: 'suppliers' }, // M3
   { to: '/app/documents', label: 'Documents', permission: 'doc.download', icon: 'documents' },

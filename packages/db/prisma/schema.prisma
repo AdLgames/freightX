@@ -87,6 +87,7 @@ model Organization {
   pickupLocations PickupLocation[]
   paymentTerms    PaymentTerms[]
   payoutMethods   PayoutMethod[]
+  containers      Container[] // M9 (ADR-0017) inverse of Container.organizationId
 
   @@map("organizations")
 }
@@ -655,7 +656,7 @@ enum ShipmentStatus {
 model Shipment {
   id                    String         @id @default(uuid()) @db.Uuid
   organizationId        String         @map("organization_id") @db.Uuid // denormalised for RLS
-  quoteId               String         @unique @map("quote_id") @db.Uuid
+  quoteId               String?        @unique @map("quote_id") @db.Uuid // M9: optional — a container can be tracked before any quote exists (ADR-0017); nullable-unique
   status                ShipmentStatus @default(PENDING_DOCS)
   forwarderId           String?        @map("forwarder_id") // which partner
   forwarderRef          String?        @map("forwarder_ref")
@@ -667,14 +668,23 @@ model Shipment {
   ata                   DateTime?
   bookingIdempotencyKey String?        @unique @map("booking_idempotency_key") // §6.2
   lastPolledAt          DateTime?      @map("last_polled_at")
+  // M9 (ADR-0017) — Phase-1 tracking fields. All optional so the migration is additive.
+  reference             String? // user label, e.g. "Autumn stock — Yantian"
+  masterBillNumber      String?        @map("master_bill_number")
+  originLocode          String?        @map("origin_locode") // UN/LOCODE (Port.locode when known)
+  destinationLocode     String?        @map("destination_locode") // UN/LOCODE; drives the vessel poll distance
+  trackingProvider      String?        @map("tracking_provider") // MilestoneProvider.id, e.g. "terminal49"; null = manual only
+  trackingRequestRef    String?        @map("tracking_request_ref") // provider's subscription id (never a secret)
+  trackingSubscribedAt  DateTime?      @map("tracking_subscribed_at")
   createdAt             DateTime       @default(now()) @map("created_at")
   updatedAt             DateTime       @updatedAt @map("updated_at")
 
   organization Organization    @relation(fields: [organizationId], references: [id])
   // (NEW vs brief) composite FK: a shipment can only be booked against its own tenant's quote.
-  quote        Quote           @relation(fields: [quoteId, organizationId], references: [id, organizationId])
+  quote        Quote?          @relation(fields: [quoteId, organizationId], references: [id, organizationId])
   documents    Document[]
   events       ShipmentEvent[]
+  containers   Container[] // M9
 
   @@unique([id, organizationId]) // (NEW vs brief) target of composite FKs from shipment_events and documents
   @@unique([quoteId, organizationId]) // (NEW vs brief) Prisma requires the 1:1 relation's scalar fields to be unique together (quoteId alone already is)
@@ -694,15 +704,69 @@ model ShipmentEvent {
   occurredAt      DateTime        @map("occurred_at")
   receivedAt      DateTime        @default(now()) @map("received_at")
   payload         Json // raw, redacted of PII
+  // M9 (ADR-0017) — milestones live here, not in a separate TrackingEvent table. All optional.
+  containerId     String?         @map("container_id") @db.Uuid
+  locationLocode  String?         @map("location_locode")
+  locationName    String?         @map("location_name")
+  latitude        Decimal?        @db.Decimal(9, 6) // coordinates, not money
+  longitude       Decimal?        @db.Decimal(9, 6)
+  vesselImo       String?         @map("vessel_imo")
+  payloadSha256   String?         @map("payload_sha256") // sha256 of the provider payload (dedupe forensics)
 
   organization Organization @relation(fields: [organizationId], references: [id]) // (NEW vs brief)
   // (NEW vs brief) composite FK keeps the denormalised organization_id consistent with the shipment.
   shipment     Shipment     @relation(fields: [shipmentId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  // M9: composite FK — an event can only point at a container of the same tenant.
+  container    Container?   @relation(fields: [containerId, organizationId], references: [id, organizationId])
 
-  @@unique([source, providerEventId])
+  // M9: idempotency is per organisation — one provider event fans out to every tenant tracking
+  // that container number (ADR-0017), so (source, providerEventId) alone would block the second.
+  @@unique([organizationId, source, providerEventId])
   @@index([organizationId]) // (NEW vs brief) RLS / tenant scoping
   @@index([shipmentId, occurredAt])
+  @@index([containerId]) // M9
   @@map("shipment_events")
+}
+
+// M9 (ADR-0017) — ISO 6346 size/type codes. Prisma enum values cannot start with a digit, so the
+// codes carry a `C` prefix (`C20GP` = 20GP). Additive only.
+enum ContainerSizeType {
+  C20GP
+  C40GP
+  C40HC
+  C45HC
+
+  @@map("container_size_type")
+}
+
+// M9 (ADR-0017) — one physical container of a shipment. Tenant table (RLS in migration 0010).
+// `containerNumber` is validated in code (ISO 6346 check digit) and by a format CHECK in the DB.
+model Container {
+  id              String             @id @default(uuid()) @db.Uuid
+  organizationId  String             @map("organization_id") @db.Uuid
+  shipmentId      String             @map("shipment_id") @db.Uuid
+  containerNumber String             @map("container_number") // ISO 6346, upper case, no spaces
+  sizeType        ContainerSizeType? @map("size_type")
+  vesselImo       String?            @map("vessel_imo") // set by LOADED_ON_VESSEL; logically references active_vessels(imo), no FK (shared table, see README)
+  vesselName      String?            @map("vessel_name")
+  voyageNumber    String?            @map("voyage_number")
+  providerRef     String?            @map("provider_ref") // provider's container id, if it issues one
+  lastMilestone   String?            @map("last_milestone") // normalised milestone name (adapters `Milestone`)
+  lastMilestoneAt DateTime?          @map("last_milestone_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  // Composite FK: a container can only belong to its own tenant's shipment.
+  shipment     Shipment        @relation(fields: [shipmentId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  events       ShipmentEvent[]
+
+  @@unique([organizationId, containerNumber, shipmentId])
+  @@unique([id, organizationId]) // target of the composite FK from shipment_events
+  @@index([organizationId])
+  @@index([containerNumber]) // M9: cross-tenant webhook lookup by number (SECURITY DEFINER function, migration 0010)
+  @@index([shipmentId])
+  @@map("containers")
 }
 
 enum DocumentType {
@@ -848,4 +912,57 @@ model FxRate {
   @@unique([source, currency, validFrom])
   @@index([currency, validFrom]) // (NEW vs brief) FX resolution looks up "latest rate for currency as of date"
   @@map("fx_rates")
+}
+
+// ---------- M9 shipment tracking, shared (non-tenant) tables (ADR-0017) ----------
+
+// Polling state of a vessel (ADR-0017 "smart pull"). Additive only.
+enum VesselPollState {
+  AT_SEA
+  COASTAL
+  APPROACHING
+  DOCKED
+  STALE
+
+  @@map("vessel_poll_state")
+}
+
+// One row per ship that currently carries a tracked container, whichever organisations own the
+// cargo: one AIS poll serves them all. Not tenant-scoped, no RLS. The app role reads it; the
+// worker (and the milestone processor) writes it. In this repo both use the `harbour_app` role
+// for now — the app/worker role split is a TODO in packages/db README ("0010").
+// Coordinates, speed and heading are not money (Decimal columns for exactness, numbers in code).
+model ActiveVessel {
+  imo                  String          @id // 7 digits, check digit validated in code + CHECK in 0010
+  name                 String?
+  lastLatitude         Decimal?        @map("last_latitude") @db.Decimal(9, 6)
+  lastLongitude        Decimal?        @map("last_longitude") @db.Decimal(9, 6)
+  speedKnots           Decimal?        @map("speed_knots") @db.Decimal(5, 1)
+  headingDeg           Decimal?        @map("heading_deg") @db.Decimal(5, 1)
+  positionAt           DateTime?       @map("position_at") // when the AIS fix was taken (never an extrapolation)
+  positionSource       String?         @map("position_source") // PositionProvider.name, e.g. SPIRE
+  providerEtaAt        DateTime?       @map("provider_eta_at") // shown as "Carrier ETA"; never computed by us
+  destinationLocode    String?         @map("destination_locode") // Port.locode used for the distance-based poll interval
+  pollState            VesselPollState @default(AT_SEA) @map("poll_state")
+  nextPollAt           DateTime?       @map("next_poll_at") // null = never (DOCKED)
+  lastError            String?         @map("last_error") // "<n>:<class>" consecutive-failure counter, no secrets
+  activeContainerCount Int             @default(0) @map("active_container_count") // 0 → DOCKED (kill switch)
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+
+  @@index([nextPollAt, pollState]) // the hourly vessel-poll selects `nextPollAt <= now AND pollState <> DOCKED`
+  @@map("active_vessels")
+}
+
+// Small UN/LOCODE reference table for distance calculations and the origin/destination selects.
+// Seeded in migration 0010 (approximate coordinates, ±0.01°, not for navigation). Shared, no RLS.
+model Port {
+  locode      String  @id // UN/LOCODE, e.g. GBFXT
+  name        String
+  countryCode String  @map("country_code") // ISO 3166-1 alpha-2
+  latitude    Decimal @db.Decimal(9, 6)
+  longitude   Decimal @db.Decimal(9, 6)
+  chokePoint  Boolean @default(false) @map("choke_point") // transshipment hub / choke point that tightens polling (COASTAL)
+
+  @@map("ports")
 }

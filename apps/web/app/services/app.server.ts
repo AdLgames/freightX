@@ -21,6 +21,7 @@ import { createBillingServices, type BillingServices } from './billing/billing.s
 // end M6
 import { createDocumentServices, type DocumentServices } from './documents/storage.server'; // M5
 import { createSettingsServices, type SettingsServices } from './settings/index.server'; // M2
+import { createTrackingServices, type TrackingServices } from './tracking/tracking.server'; // M9
 
 /**
  * Composition root. Built once per process (memoised on `globalThis` so `react-router dev`
@@ -52,6 +53,8 @@ export interface AppServices {
   documents: DocumentServices;
   /** M2: field encryption, Companies House lookup, job enqueuer, forwarder details. See settings/index.server.ts. */
   settings: SettingsServices;
+  /** M9: shipment tracking providers, event queue and map config. See tracking/tracking.server.ts. */
+  tracking: TrackingServices;
 }
 
 export interface AppOverrides {
@@ -114,6 +117,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
   // end M6
   // M5
   const documents = createDocumentServices({ env, logger, redis, prisma: auth.prisma });
+  const tracking = createTrackingServices({ env, logger, prisma: auth.prisma, now }); // M9
 
   logger.info('app.started', {
     nodeEnv: env.NODE_ENV,
@@ -156,6 +160,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     // end M6
     documents, // M5
     settings, // M2
+    tracking, // M9
   };
 };
 

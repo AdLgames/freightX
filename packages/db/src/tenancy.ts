@@ -44,6 +44,7 @@ export const TENANT_MODELS = [
   'PaymentTerms',
   'PayoutMethod',
   'Invitation', // M2
+  'Container', // M9
 ] as const;
 export type TenantModel = (typeof TENANT_MODELS)[number];
 
@@ -57,6 +58,8 @@ export const PASSTHROUGH_MODELS = [
   // M6: Stripe webhook idempotency rows (no organisation until processed; no RLS).
   'StripeEvent',
   // end M6
+  'ActiveVessel', // M9: shared vessel positions (ADR-0017)
+  'Port', // M9: UN/LOCODE reference table
 ] as const;
 export type PassthroughModel = (typeof PASSTHROUGH_MODELS)[number];
 
@@ -79,6 +82,7 @@ export const TENANT_TABLES: Readonly<Record<TenantModel, string>> = {
   PaymentTerms: 'payment_terms',
   PayoutMethod: 'payout_methods',
   Invitation: 'invitations', // M2
+  Container: 'containers', // M9
 };
 
 export const isTenantModel = (model: string): model is TenantModel =>

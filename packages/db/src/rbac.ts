@@ -25,6 +25,7 @@ export const ACTIONS = [
   // and the audit-log view are OWNER/ADMIN, like the other organisation settings.
   'org.company.confirm',
   'audit.view',
+  'shipment.track', // M9: track a container / add a manual milestone (not booking — that stays gated)
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -48,6 +49,7 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   // M2
   'org.company.confirm': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'audit.view': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  'shipment.track': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false }, // M9
 };
 
 export class ForbiddenError extends Error {
