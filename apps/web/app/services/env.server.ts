@@ -114,6 +114,16 @@ const envSchema = z
       .url()
       .refine((u) => /^https:\/\//i.test(u), 'MAP_STYLE_URL must be https.')
       .default('https://tiles.openfreemap.org/styles/liberty'),
+    /**
+     * Demo fleet (docs/design-system.md, Home): `on` lets a member seed three simulated ships on the
+     * Home map and keeps them moving on every map load. Rows are labelled SIMULATED; default off.
+     */
+    DEMO_FLEET: z.enum(['on', 'off']).default('off'),
+    /**
+     * Bearer token Vercel sends to cron routes (`Authorization: Bearer <CRON_SECRET>`). Unset → the
+     * cron routes answer 503 and never run. Not used by the worker (it has its own scheduler).
+     */
+    CRON_SECRET: z.string().min(16).max(1024).optional(),
     /** Extra https origins the map may fetch tiles/glyphs/sprites from (comma-separated), e.g. a CDN. */
     MAP_TILE_ORIGINS: z
       .string()
@@ -192,6 +202,8 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     SPIRE_API_TOKEN: blank(source.SPIRE_API_TOKEN),
     MARINETRAFFIC_API_KEY: blank(source.MARINETRAFFIC_API_KEY),
     MAP_STYLE_URL: blank(source.MAP_STYLE_URL),
+    DEMO_FLEET: blank(source.DEMO_FLEET),
+    CRON_SECRET: blank(source.CRON_SECRET),
     MAP_TILE_ORIGINS: blank(source.MAP_TILE_ORIGINS),
   });
   return {

@@ -18,6 +18,12 @@ export interface FxRateStore {
   /** Latest rate for `currency` from `source` valid at `at`, or null. */
   find(source: FxSource, currency: string, at: Date): Promise<FxRateRecord | null>;
   upsert(records: readonly FxRateRecord[]): Promise<void>;
+  /**
+   * Records for `currency` from `source` whose `validFrom` falls in [from, to] (dates compared at
+   * UTC midnight), oldest first. For trends (the Home treasury widget), never for pricing: a
+   * quote resolves one rate with `find`.
+   */
+  history(source: FxSource, currency: string, from: Date, to: Date): Promise<FxRateRecord[]>;
 }
 
 export class InMemoryFxStore implements FxRateStore {
@@ -30,6 +36,15 @@ export class InMemoryFxStore implements FxRateStore {
       .filter((r) => new Date(r.validFrom).getTime() <= t && new Date(r.validTo).getTime() >= t)
       .sort((a, b) => b.validFrom.localeCompare(a.validFrom));
     return matches[0] ?? null;
+  }
+
+  async history(source: FxSource, currency: string, from: Date, to: Date): Promise<FxRateRecord[]> {
+    const lo = from.toISOString().slice(0, 10);
+    const hi = to.toISOString().slice(0, 10);
+    return this.records
+      .filter((r) => r.source === source && r.currency === currency)
+      .filter((r) => r.validFrom >= lo && r.validFrom <= hi)
+      .sort((a, b) => a.validFrom.localeCompare(b.validFrom));
   }
 
   async upsert(records: readonly FxRateRecord[]): Promise<void> {

@@ -14,6 +14,7 @@ import { requestLogger } from '../services/logger.server';
 import { pageError } from '../services/page-error';
 import { readForm } from '../services/request.server';
 import { CSP_ADDITIONS_HEADER, serializeCspAdditions } from '../services/security-headers.server';
+import { advanceDemoFleet } from '../services/tracking/demo-fleet.server';
 import {
   addManualEvent,
   getShipmentDetail,
@@ -57,6 +58,7 @@ export const loader = async ({ request, params }: Route.LoaderArgs) => {
   if (!id.success) throw notFound();
   const now = new Date();
   const result = await withOrg(ctx, async (tx) => {
+    if (app.tracking.demoFleetEnabled) await advanceDemoFleet(tx, { now, log: app.logger });
     const detail = await getShipmentDetail(tx, id.data);
     if (!detail) return null;
     return { detail, mapState: await loadMapState(tx, { shipmentId: id.data, now }) };

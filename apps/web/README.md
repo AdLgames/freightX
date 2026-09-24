@@ -82,24 +82,26 @@ curl -s -X POST localhost:3123/calculator \
 
 All optional (see the root `.env.example`):
 
-| Variable                                      | Effect when set                                                   | When unset                                                            |
-| --------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `DATABASE_URL`                                | Prisma stores (`db.server.ts`) and the workspace                  | in-memory calculator stores; workspace says "needs a database"        |
-| `REDIS_URL`                                   | shared rate limiter (fails open) and session store (fails closed) | in-memory limiter and sessions; **production: workspace 503**         |
-| `APP_URL`                                     | origin for magic links and the CSRF Origin check                  | request origin (dev/test); **production: sign-in not available**      |
-| `EMAIL_TRANSPORT`                             | `console` (dev/test only) or `resend`                             | console outside production; **production: sign-in not available**     |
-| `RESEND_API_KEY` / `EMAIL_FROM`               | Resend API key and sender, required by `EMAIL_TRANSPORT=resend`   | —                                                                     |
-| `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | Turnstile widget + server-side verification (fail closed)         | bot check off, one warning at startup                                 |
-| `FX_SEED_CSV`                                 | HMRC monthly CSV loaded into the FX store at startup              | adapters **sample** CSV, loud `fx.sample_rates` warning               |
-| `RATE_SHEET_PATH`                             | freight rate sheet JSON                                           | `packages/adapters/rate-sheets/v1.json`, resolved through the package |
-| `SESSION_SECRET`                              | unused (session ids are random and server-side; nothing signed)   | —                                                                     |
-| `TRADE_TARIFF_API_KEY` / `…_HEADER`           | key sent in that header on every tariff call (both or neither)    | anonymous calls; only one of the two set → startup fails              |
-| `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form      | no default fee; the form says fee terms depend on the forwarder       |
-| `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown        | no adjustment                                                         |
-| `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                        | development / debug                                                   |
-| `FIELD_ENCRYPTION_KEY` (M2)                   | master key for EORI/VAT field encryption (32 bytes, base64)       | ephemeral key + warning; **production: workspace 503**                |
-| `COMPANIES_HOUSE_API_KEY` (M2)                | Companies House lookup in Settings › Organisation                 | lookup off; "sole trader or partnership" only                         |
-| `FORWARDER_EORI` / `FORWARDER_NAME` (M2)      | shown in the CDS "authorise the forwarder" step                   | "{forwarder to be confirmed}"                                         |
+| Variable                                      | Effect when set                                                      | When unset                                                            |
+| --------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `DATABASE_URL`                                | Prisma stores (`db.server.ts`) and the workspace                     | in-memory calculator stores; workspace says "needs a database"        |
+| `REDIS_URL`                                   | shared rate limiter (fails open) and session store (fails closed)    | in-memory limiter and sessions; **production: workspace 503**         |
+| `APP_URL`                                     | origin for magic links and the CSRF Origin check                     | request origin (dev/test); **production: sign-in not available**      |
+| `EMAIL_TRANSPORT`                             | `console` (dev/test only) or `resend`                                | console outside production; **production: sign-in not available**     |
+| `RESEND_API_KEY` / `EMAIL_FROM`               | Resend API key and sender, required by `EMAIL_TRANSPORT=resend`      | —                                                                     |
+| `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | Turnstile widget + server-side verification (fail closed)            | bot check off, one warning at startup                                 |
+| `FX_SEED_CSV`                                 | HMRC monthly CSV loaded into the FX store at startup                 | adapters **sample** CSV, loud `fx.sample_rates` warning               |
+| `RATE_SHEET_PATH`                             | freight rate sheet JSON                                              | `packages/adapters/rate-sheets/v1.json`, resolved through the package |
+| `SESSION_SECRET`                              | unused (session ids are random and server-side; nothing signed)      | —                                                                     |
+| `TRADE_TARIFF_API_KEY` / `…_HEADER`           | key sent in that header on every tariff call (both or neither)       | anonymous calls; only one of the two set → startup fails              |
+| `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form         | no default fee; the form says fee terms depend on the forwarder       |
+| `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown           | no adjustment                                                         |
+| `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                           | development / debug                                                   |
+| `FIELD_ENCRYPTION_KEY` (M2)                   | master key for EORI/VAT field encryption (32 bytes, base64)          | ephemeral key + warning; **production: workspace 503**                |
+| `COMPANIES_HOUSE_API_KEY` (M2)                | Companies House lookup in Settings › Organisation                    | lookup off; "sole trader or partnership" only                         |
+| `FORWARDER_EORI` / `FORWARDER_NAME` (M2)      | shown in the CDS "authorise the forwarder" step                      | "{forwarder to be confirmed}"                                         |
+| `DEMO_FLEET` (Home map)                       | `on`: members can load a simulated fleet; it moves on every map load | off: the Home map shows real tracked shipments only                   |
+| `CRON_SECRET`                                 | bearer token for `GET /api/cron/fx-refresh` (Vercel Cron)            | the cron route answers 503; the treasury widget stays empty           |
 
 `TRADE_TARIFF_API_KEY_HEADER` must be confirmed from the Trade Tariff developer portal before
 use; the key is never logged (only its presence, in `app.started`). The fee and inland-adjustment
@@ -470,6 +472,22 @@ must be checked against the live APIs and a sandbox before being enabled. With `
 Worker side (`apps/worker`): `vessel-poll` (hourly sweep, per-vessel intervals), `tracking-poll`
 (6-hourly milestone fallback) and `tracking-events` (webhook consumer).
 
+**Home map and the demo fleet.** The same map component and `/app/api/map-state` feed sit on
+Home for every active container of the organisation (the route's `headers()` adds the map CSP
+sources exactly like the detail route). The pill reads "Live tracking" with a position provider,
+"Manual milestones" without one, and "Simulated data" when any shown vessel carries
+`positionSource = SIMULATED`. With `DEMO_FLEET=on` (default off) a member with `shipment.track`
+sees "Load a simulated fleet" in the empty panel: `services/tracking/demo-fleet.ts` defines three
+fictional ships (valid ISO 6346 / IMO check digits, unallocated prefixes) on the engine's lanes;
+`demo-fleet.server.ts` seeds shipments (`tracking_provider = simulated`), containers, the shared
+`active_vessels` rows and the back-dated departure and waypoint events (`source = SIMULATED`), and
+**advances the fleet on read**: every Home, detail or map-state load moves each simulated vessel to
+where its voyage puts it now (a new "ping" at most every 10 minutes), appends a `SIMULATED` event
+per lane waypoint passed and restarts the voyage on arrival, so the demo runs on Vercel with no
+worker. "Clear simulated fleet" cancels the shipments (events are append-only) and releases the
+vessels; audit `shipment.track` / `shipment.untrack` carry `simulated: true`. Nothing simulated is
+ever polled: `next_poll_at` stays null.
+
 ## Phase 1 TODO (not built — brief §2, §7)
 
 - Auth: passkeys (WebAuthn), optional TOTP.
@@ -669,6 +687,15 @@ rows through `withOrg`; every POST carries `<CsrfInput/>`.
   same 10-per-minute-per-user limit as the HS code field; ambiguous tariffs are reported, never
   priced at 0%; a 6/8-digit code lists the 10-digit candidates for the user to pick. Nothing is
   saved. When the tariff service is unreachable the card says so.
+
+- **Treasury** (`components/home/treasury-card.tsx`, `services/fx-treasury.server.ts`): GBP/USD
+  and GBP/EUR from the ECB reference rates in the FX store (`FxRateStore.history`, never an API
+  call in the request path, §5.7) with the change against the newest rate on or before seven
+  days earlier; green when the pound strengthened. Quotes still price with the HMRC monthly rate,
+  which the card does not show. Rates arrive from the worker's `fx-refresh` job or, until the
+  worker has a host, from `GET /api/cron/fx-refresh` (Vercel Cron, daily 16:20 UTC after the ECB
+  publishes; `CRON_SECRET` bearer, 503 when unset). Both load the ECB 90-day history file and
+  write only the days the store lacks plus the two newest.
 
 ### Tests
 
