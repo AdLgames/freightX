@@ -20,11 +20,10 @@
 
 ## In progress
 
-| Milestone                            | State                                                                                                                |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| M5 document vault                    | Built and verified in its branch; merge resolved, final checks running before push                                   |
-| M2 settings and customs profile      | Built and verified in its branch (encryption, wizard, company lookup, members, invitations, audit log); merge next   |
-| M9 tracking (Phase 2, started early) | Being built: containers, milestone webhooks, per-vessel polling, lane-aware dead reckoning, MapLibre and Deck.gl map |
+| Milestone                       | State                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| M5 document vault               | Built and verified in its branch; merge resolved, final checks running before push                                 |
+| M2 settings and customs profile | Built and verified in its branch (encryption, wizard, company lookup, members, invitations, audit log); merge next |
 
 ## Not started
 
