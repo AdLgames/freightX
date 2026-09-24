@@ -25,7 +25,7 @@ const CSP_ADDABLE_DIRECTIVES = new Set([
   'style-src',
   'font-src',
 ]);
-const CSP_SOURCE = /^(https:\/\/[A-Za-z0-9.-]+(?::\d+)?|'self'|blob:|data:)$/;
+const CSP_SOURCE = /^((?:https|wss):\/\/[A-Za-z0-9.-]+(?::\d+)?|'self'|blob:|data:)$/;
 export type CspAdditions = Readonly<Record<string, readonly string[]>>;
 
 export const parseCspAdditions = (raw: string | null | undefined): CspAdditions => {

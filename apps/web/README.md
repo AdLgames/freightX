@@ -102,6 +102,7 @@ All optional (see the root `.env.example`):
 | `FORWARDER_EORI` / `FORWARDER_NAME` (M2)      | shown in the CDS "authorise the forwarder" step                                      | "{forwarder to be confirmed}"                                         |
 | `DEMO_FLEET` (Home map)                       | `on`: members can load a simulated fleet; it moves on every map load                 | off: the Home map shows real tracked shipments only                   |
 | `CRON_SECRET`                                 | bearer token for `GET /api/cron/fx-refresh` (Vercel Cron)                            | the cron route answers 503; the treasury widget stays empty           |
+| `AISSTREAM_API_KEY` (Home map)                | live AIS traffic overlay around the UK; the key reaches members' browsers            | no overlay                                                            |
 
 `TRADE_TARIFF_API_KEY_HEADER` must be confirmed from the Trade Tariff developer portal before
 use; the key is never logged (only its presence, in `app.started`). The fee and inland-adjustment
@@ -688,6 +689,24 @@ rows through `withOrg`; every POST carries `<CsrfInput/>`.
   priced at 0%; a 6/8-digit code lists the 10-digit candidates for the user to pick. Nothing is
   saved. When the tariff service is unreachable the card says so.
 
+- **Exceptions** (`services/home.server.ts` `homeAlerts`): the action banner as a list. Critical:
+  a shipment with an ETA inside seven days (or past) that has no bill of lading / telex release or
+  air waybill on file (its own documents or its quote's, rejected and deleted ones excluded) —
+  "Release document missing", linking to the upload with the type preset and to the shipment.
+  Warning: the customs-profile gaps (`homeActions`). Copy only, never amounts or the EORI.
+- **Margin watch** (`components/home/margin-watch-card.tsx`, `services/bills/margin-watch.server.ts`):
+  open purchase orders with posted bills are run through the costs page's maths
+  (`loadOrderCosts` → engine `absorbActuals`); the card shows the order furthest over its accepted
+  quote's landed-cost estimate when the overrun exceeds 2 %, the category driving it and whether
+  categories are still unbilled, linking to `/app/orders/:id/costs`. Neutral when within budget,
+  quiet without posted bills. Capped at twelve candidate orders per load.
+- **Live AIS traffic** (`AISSTREAM_API_KEY`, `lib/ais-client.ts`, `tracking-map.client.tsx`): the
+  Home map opens a WebSocket to aisstream.io from the browser and draws position reports inside
+  the UK bounding box as lime dots (cache capped at 1,500 vessels, silent ones dropped after 15
+  minutes, reconnect with backoff). The route adds `connect-src wss://stream.aisstream.io` to its
+  CSP. It is the picture around the organisation's ships, never its ships: real positions for
+  tracked containers still come from the position providers. The key is delivered to signed-in
+  members' browsers, exactly like a map-style key, so use a dedicated free key.
 - **Treasury** (`components/home/treasury-card.tsx`, `services/fx-treasury.server.ts`): GBP/USD
   and GBP/EUR from the ECB reference rates in the FX store (`FxRateStore.history`, never an API
   call in the request path, §5.7) with the change against the newest rate on or before seven

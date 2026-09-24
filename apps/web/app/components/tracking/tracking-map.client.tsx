@@ -3,6 +3,14 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import maplibregl, { type GeoJSONSource } from 'maplibre-gl';
 import { useEffect, useRef, useState } from 'react';
 import {
+  AIS_STREAM_URL,
+  AIS_UK_BOUNDS,
+  aisSubscribeMessage,
+  parseAisMessage,
+  upsertAisVessel,
+  type AisVessel,
+} from '../../lib/ais-client';
+import {
   advanceClient,
   haversineKm,
   uncertaintyRadiusKm,
@@ -21,9 +29,15 @@ import type { TrackingMapProps } from './tracking-map';
  * and cap (`lib/kinematics-client.ts`); when fresh state arrives the icon glides to the new
  * position over ~1.5 s instead of jumping. Nothing here is stored: only real pings carry a
  * `positionSource`, and extrapolated points are display-only.
+ *
+ * With `ais` (Home, `AISSTREAM_API_KEY`) a second ScatterplotLayer draws live AIS traffic from
+ * aisstream.io around the UK as small lime dots: the picture around the organisation's ships,
+ * never its ships. The socket reconnects with a backoff and the cache is bounded (lib/ais-client).
  */
 const REFRESH_MS = 60_000;
 const GLIDE_MS = 1_500;
+const AIS_RECONNECT_MS = 15_000;
+const AIS_COUNT_MS = 2_000;
 
 const SHIP_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">' +
@@ -120,9 +134,20 @@ const stepAll = (
 
 const toLonLat = (p: GeoPoint): [number, number] => [p.lon, p.lat];
 
-const buildLayers = (live: Map<string, Live>) => {
+const buildLayers = (live: Map<string, Live>, ais: readonly AisVessel[]) => {
   const rows = [...live.values()];
   return [
+    new ScatterplotLayer<AisVessel>({
+      id: 'ais-traffic',
+      data: ais,
+      getPosition: (v) => [v.lon, v.lat],
+      getRadius: 400,
+      radiusUnits: 'meters',
+      radiusMinPixels: 2.5,
+      radiusMaxPixels: 7,
+      getFillColor: [197, 240, 66, 190],
+      pickable: false,
+    }),
     new PathLayer<Live>({
       id: 'actual-route',
       data: rows.filter((r) => r.container.actualPath.length >= 2),
@@ -179,7 +204,7 @@ const expectedRouteGeoJson = (live: Map<string, Live>): GeoJSON.FeatureCollectio
     })),
 });
 
-const fitBounds = (map: maplibregl.Map, state: MapState) => {
+const fitBounds = (map: maplibregl.Map, state: MapState, aisEnabled: boolean) => {
   const pts: GeoPoint[] = [];
   for (const c of state.containers) {
     pts.push(...c.actualPath, ...c.expectedPath);
@@ -187,7 +212,18 @@ const fitBounds = (map: maplibregl.Map, state: MapState) => {
     if (s) pts.push(s);
     if (c.destination) pts.push({ lat: c.destination.lat, lon: c.destination.lon });
   }
-  if (pts.length === 0) return;
+  if (pts.length === 0) {
+    if (aisEnabled) {
+      map.fitBounds(
+        [
+          [AIS_UK_BOUNDS[0][1], AIS_UK_BOUNDS[0][0]],
+          [AIS_UK_BOUNDS[1][1], AIS_UK_BOUNDS[1][0]],
+        ],
+        { padding: 24, duration: 0 },
+      );
+    }
+    return;
+  }
   if (pts.length === 1 || pts.every((p) => haversineKm(p, pts[0]!) < 1)) {
     map.jumpTo({ center: toLonLat(pts[0]!), zoom: 5 });
     return;
@@ -197,12 +233,62 @@ const fitBounds = (map: maplibregl.Map, state: MapState) => {
   map.fitBounds(bounds, { padding: 48, maxZoom: 8, duration: 0 });
 };
 
-export function TrackingMapClient({ styleUrl, stateUrl, initialState }: TrackingMapProps) {
+export function TrackingMapClient({ styleUrl, stateUrl, initialState, ais }: TrackingMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<MapState>(initialState);
   const stateRef = useRef<MapState>(initialState);
   const [status, setStatus] = useState<'ok' | 'refresh-failed'>('ok');
   const [selected, setSelected] = useState<Live | null>(null);
+  const aisRef = useRef<Map<string, AisVessel>>(new Map());
+  const [aisCount, setAisCount] = useState(0);
+  const [aisStatus, setAisStatus] = useState<'off' | 'connecting' | 'live' | 'down'>(
+    ais ? 'connecting' : 'off',
+  );
+  const aisKey = ais?.apiKey ?? null;
+
+  // Live AIS traffic (Home): one socket, reconnecting; the cache is pruned on every report.
+  useEffect(() => {
+    if (!aisKey) return;
+    let socket: WebSocket | null = null;
+    let closed = false;
+    let retry: number | undefined;
+    const connect = () => {
+      if (closed) return;
+      setAisStatus('connecting');
+      try {
+        socket = new WebSocket(AIS_STREAM_URL);
+      } catch {
+        setAisStatus('down');
+        retry = window.setTimeout(connect, AIS_RECONNECT_MS);
+        return;
+      }
+      socket.onopen = () => {
+        socket?.send(aisSubscribeMessage(aisKey));
+        setAisStatus('live');
+      };
+      socket.onmessage = (ev) => {
+        if (typeof ev.data !== 'string') return;
+        const now = Date.now();
+        const v = parseAisMessage(ev.data, now);
+        if (v) upsertAisVessel(aisRef.current, v, now);
+      };
+      socket.onerror = () => setAisStatus('down');
+      socket.onclose = () => {
+        if (closed) return;
+        setAisStatus('down');
+        retry = window.setTimeout(connect, AIS_RECONNECT_MS);
+      };
+    };
+    connect();
+    const counter = window.setInterval(() => setAisCount(aisRef.current.size), AIS_COUNT_MS);
+    return () => {
+      closed = true;
+      window.clearInterval(counter);
+      if (retry !== undefined) window.clearTimeout(retry);
+      socket?.close();
+      aisRef.current.clear();
+    };
+  }, [aisKey]);
 
   // Periodic refresh (60 s). The server recomputes dead reckoning; the client glides to it.
   useEffect(() => {
@@ -255,7 +341,7 @@ export function TrackingMapClient({ styleUrl, stateUrl, initialState }: Tracking
 
     const frame = () => {
       live = stepAll(stateRef.current, live, Date.now());
-      overlay.setProps({ layers: buildLayers(live) });
+      overlay.setProps({ layers: buildLayers(live, [...aisRef.current.values()]) });
       if (loaded) {
         const src = map.getSource<GeoJSONSource>('expected-route');
         src?.setData(expectedRouteGeoJson(live));
@@ -278,14 +364,14 @@ export function TrackingMapClient({ styleUrl, stateUrl, initialState }: Tracking
         },
         layout: { 'line-cap': 'round' },
       });
-      fitBounds(map, stateRef.current);
+      fitBounds(map, stateRef.current, aisKey !== null);
     });
     raf = window.requestAnimationFrame(frame);
     return () => {
       window.cancelAnimationFrame(raf);
       map.remove();
     };
-  }, [styleUrl]);
+  }, [styleUrl, aisKey]);
 
   const tracked = state.containers.filter((c) => c.ping);
   return (
@@ -306,6 +392,16 @@ export function TrackingMapClient({ styleUrl, stateUrl, initialState }: Tracking
         <span>
           <i className="legend-circle" /> Position uncertainty
         </span>
+        {aisStatus !== 'off' ? (
+          <span>
+            <i className="legend-dot ais" />{' '}
+            {aisStatus === 'live'
+              ? `Live AIS traffic · ${aisCount} vessel${aisCount === 1 ? '' : 's'}`
+              : aisStatus === 'connecting'
+                ? 'Connecting to live AIS…'
+                : 'Live AIS unavailable, reconnecting…'}
+          </span>
+        ) : null}
         {status === 'refresh-failed' ? (
           <span className="field-error">Live refresh failed; showing the last known state.</span>
         ) : null}

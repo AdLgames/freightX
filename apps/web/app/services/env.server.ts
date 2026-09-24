@@ -120,6 +120,12 @@ const envSchema = z
      */
     DEMO_FLEET: z.enum(['on', 'off']).default('off'),
     /**
+     * aisstream.io API key: the Home map overlays live AIS traffic around the UK. The key is sent
+     * to signed-in members' browsers (the stream is browser-to-provider, like a map style key),
+     * so use a dedicated free key, never one shared with anything else. Unset → no overlay.
+     */
+    AISSTREAM_API_KEY: z.string().min(8).max(256).optional(),
+    /**
      * Bearer token Vercel sends to cron routes (`Authorization: Bearer <CRON_SECRET>`). Unset → the
      * cron routes answer 503 and never run. Not used by the worker (it has its own scheduler).
      */
@@ -203,6 +209,7 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     MARINETRAFFIC_API_KEY: blank(source.MARINETRAFFIC_API_KEY),
     MAP_STYLE_URL: blank(source.MAP_STYLE_URL),
     DEMO_FLEET: blank(source.DEMO_FLEET),
+    AISSTREAM_API_KEY: blank(source.AISSTREAM_API_KEY),
     CRON_SECRET: blank(source.CRON_SECRET),
     MAP_TILE_ORIGINS: blank(source.MAP_TILE_ORIGINS),
   });

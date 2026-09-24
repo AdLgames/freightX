@@ -72,3 +72,92 @@ export interface RecentDraft {
 /** Start of the current month in UTC — quotes created from here count towards "this month". */
 export const startOfMonthUtc = (now: Date): Date =>
   new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+// ---------- Exception alerts (Home "Action required", extended) ----------
+
+/**
+ * The Home banner as an exception list. Two sources today:
+ *   - customs profile gaps (`homeActions`, warning);
+ *   - a release document missing on a shipment that is about to arrive (critical): without the
+ *     bill of lading (or its telex release) / air waybill the container cannot be collected and
+ *     demurrage starts. Arrivals are shipments with an ETA inside `RELEASE_DOCUMENT_WINDOW_DAYS`
+ *     (or already past) that are not delivered or cancelled.
+ * Pure: the loader gathers rows, this decides. Copy only — no amounts, no PII.
+ */
+export const RELEASE_DOCUMENT_WINDOW_DAYS = 7;
+export const RELEASE_DOCUMENT_TYPES = ['BILL_OF_LADING', 'AIRWAY_BILL'] as const;
+
+export interface ArrivalInput {
+  shipmentId: string;
+  reference: string | null;
+  /** Destination port name (or LOCODE) for copy. */
+  destinationName: string | null;
+  etaIso: string;
+  quoteId: string | null;
+  /** Document types on file for this shipment (its own and its quote's), excluding rejected/deleted. */
+  documentTypes: readonly string[];
+}
+
+export interface HomeAlert {
+  id: string;
+  level: 'critical' | 'warning';
+  title: string;
+  message: string;
+  actionText: string;
+  actionHref: string;
+  /** Secondary link, e.g. the shipment itself. */
+  secondary: { text: string; href: string } | null;
+}
+
+const DAY_MS = 86_400_000;
+
+const daysUntil = (iso: string, now: Date): number =>
+  Math.ceil((new Date(iso).getTime() - now.getTime()) / DAY_MS);
+
+const arrivalPhrase = (days: number): string => {
+  if (days < 0) return `arrived ${-days} day${days === -1 ? '' : 's'} ago`;
+  if (days === 0) return 'arrives today';
+  if (days === 1) return 'arrives tomorrow';
+  return `arrives in ${days} days`;
+};
+
+export const homeAlerts = (
+  input: HomeActionInput & { arrivals: readonly ArrivalInput[] },
+  now: Date,
+): HomeAlert[] => {
+  const alerts: HomeAlert[] = [];
+  const arrivals = [...input.arrivals].sort((a, b) => a.etaIso.localeCompare(b.etaIso));
+  for (const a of arrivals) {
+    const days = daysUntil(a.etaIso, now);
+    if (days > RELEASE_DOCUMENT_WINDOW_DAYS) continue;
+    const hasRelease = a.documentTypes.some((t) =>
+      (RELEASE_DOCUMENT_TYPES as readonly string[]).includes(t),
+    );
+    if (hasRelease) continue;
+    const name = a.reference ?? 'A shipment';
+    const where = a.destinationName ? ` at ${a.destinationName}` : '';
+    alerts.push({
+      id: `release_missing:${a.shipmentId}`,
+      level: 'critical',
+      title: 'Release document missing',
+      message: `${name} ${arrivalPhrase(days)}${where}. Without the bill of lading (telex release) or air waybill the container cannot be collected and demurrage starts.`,
+      actionText: 'Upload the bill of lading',
+      actionHref: a.quoteId
+        ? `/app/documents/new?quoteId=${a.quoteId}&type=BILL_OF_LADING`
+        : '/app/documents/new?type=BILL_OF_LADING',
+      secondary: { text: 'View shipment', href: `/app/tracking/${a.shipmentId}` },
+    });
+  }
+  for (const item of homeActions(input)) {
+    alerts.push({
+      id: item.id,
+      level: 'warning',
+      title: 'Action required: complete your customs profile',
+      message: item.text,
+      actionText: 'Complete setup',
+      actionHref: item.href,
+      secondary: null,
+    });
+  }
+  return alerts;
+};
