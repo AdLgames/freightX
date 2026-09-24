@@ -12,7 +12,8 @@ import { PrismaTrackingStore, type PrismaClient } from '@harbour/db';
 import type { Env } from '../env.server';
 import type { Logger } from '../logger.server';
 import type { CspAdditions } from '../security-headers.server';
-import { mapCspAdditions } from './csp.server';
+import { AIS_STREAM_ORIGIN } from '../../lib/ais-client';
+import { mapCspAdditions, withAisOrigin } from './csp.server';
 
 /**
  * M9 (ADR-0017) — tracking composition for the web app: the milestone provider (subscribe /
@@ -45,6 +46,7 @@ export interface TrackingServices {
   store: PrismaTrackingStore | null;
   queue: TrackingQueue;
   mapStyleUrl: string;
+  /** Map CSP sources (tiles, blob workers, data icons, and the AIS socket when configured), applied to every workspace document by the /app layout. */
   mapCsp: CspAdditions;
   /** `DEMO_FLEET=on`: the Home map offers a simulated fleet and advances it on every map load. */
   demoFleetEnabled: boolean;
@@ -161,7 +163,10 @@ export const createTrackingServices = (deps: TrackingDeps): TrackingServices => 
     store,
     queue,
     mapStyleUrl: env.MAP_STYLE_URL,
-    mapCsp: mapCspAdditions(env.MAP_STYLE_URL, env.MAP_TILE_ORIGINS ?? []),
+    mapCsp: withAisOrigin(
+      mapCspAdditions(env.MAP_STYLE_URL, env.MAP_TILE_ORIGINS ?? []),
+      env.AISSTREAM_API_KEY ? AIS_STREAM_ORIGIN : null,
+    ),
     demoFleetEnabled: env.DEMO_FLEET === 'on',
     aisStreamKey: env.AISSTREAM_API_KEY ?? null,
     webhookProvider: (providerId) => milestoneProviderForWebhook(providerId, env, { now }),

@@ -17,7 +17,6 @@ import { MarginWatchCard } from '../components/home/margin-watch-card';
 import { TreasuryCard } from '../components/home/treasury-card';
 import { TrackingMap } from '../components/tracking/tracking-map';
 import { modeName, portName } from '../data/ports';
-import { AIS_STREAM_ORIGIN } from '../lib/ais-client';
 import { getApp } from '../services/app.server';
 import { requireOrgContext, withOrg } from '../services/auth.server';
 import { loadMarginWatch } from '../services/bills/margin-watch.server';
@@ -72,9 +71,10 @@ export const meta: Route.MetaFunction = () => [{ title: 'Home — Harbour' }];
 
 export const links: Route.LinksFunction = () => [{ rel: 'stylesheet', href: maplibreCss }];
 
-export const headers: Route.HeadersFunction = ({ loaderHeaders }) => ({
+export const headers: Route.HeadersFunction = ({ loaderHeaders, parentHeaders }) => ({
   'Cache-Control': 'no-store',
-  [CSP_ADDITIONS_HEADER]: loaderHeaders.get(CSP_ADDITIONS_HEADER) ?? '',
+  [CSP_ADDITIONS_HEADER]:
+    loaderHeaders.get(CSP_ADDITIONS_HEADER) ?? parentHeaders.get(CSP_ADDITIONS_HEADER) ?? '',
 });
 
 const DAY_MS = 86_400_000;
@@ -186,13 +186,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
   // Treasury: ECB rows from the shared store (no API call; §5.7).
   const treasury = await loadTreasury(app.stores.fxStore, now);
   const headers = new Headers(ctx.headers);
-  const csp = aisKey
-    ? {
-        ...app.tracking.mapCsp,
-        'connect-src': [...(app.tracking.mapCsp['connect-src'] ?? []), AIS_STREAM_ORIGIN],
-      }
-    : app.tracking.mapCsp;
-  headers.set(CSP_ADDITIONS_HEADER, serializeCspAdditions(csp));
+  headers.set(CSP_ADDITIONS_HEADER, serializeCspAdditions(app.tracking.mapCsp));
   // Only derived alert copy leaves the server; the EORI itself never does.
   return data(
     {
