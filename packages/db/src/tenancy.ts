@@ -39,6 +39,7 @@ export const TENANT_MODELS = [
   'AuditLog',
   'OutboxEvent',
   'CustomsProfile',
+  'Container', // M9
 ] as const;
 export type TenantModel = (typeof TENANT_MODELS)[number];
 
@@ -49,6 +50,8 @@ export const PASSTHROUGH_MODELS = [
   'TariffCache',
   'MagicLinkToken',
   'EmailSignup',
+  'ActiveVessel', // M9: shared vessel positions (ADR-0017)
+  'Port', // M9: UN/LOCODE reference table
 ] as const;
 export type PassthroughModel = (typeof PASSTHROUGH_MODELS)[number];
 
@@ -66,6 +69,7 @@ export const TENANT_TABLES: Readonly<Record<TenantModel, string>> = {
   AuditLog: 'audit_logs',
   OutboxEvent: 'outbox_events',
   CustomsProfile: 'customs_profiles',
+  Container: 'containers', // M9
 };
 
 export const isTenantModel = (model: string): model is TenantModel =>

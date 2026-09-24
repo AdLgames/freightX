@@ -11,3 +11,5 @@ export * from './freight/rate-sheet.js';
 export * from './freight/resilient.js';
 export * from './freight/searates.js';
 export * from './schedules/index.js';
+// M9 — shipment tracking (ADR-0017)
+export * from './tracking/index.js';

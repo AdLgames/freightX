@@ -57,6 +57,25 @@ export {
 } from './stores.js';
 export type { PrismaTariffCacheStoreOptions, EmailSignupInput } from './stores.js';
 
+// M9 — shipment tracking stores (ADR-0017). See src/tracking.ts.
+export {
+  PrismaTrackingStore,
+  PrismaVesselPollStore,
+  PrismaVesselStore,
+  toActiveVesselRow,
+  toPortRow,
+  trackingOrgStore,
+  withTrackingLookup,
+  withTrackingSweep,
+} from './tracking.js';
+export type {
+  ActiveVesselRow,
+  PortRow,
+  ShipmentDueForPoll,
+  VesselPollPort,
+  VesselPositionPatch,
+} from './tracking.js';
+
 // Generated client re-exports. `PrismaClient` is exported as a type only: construct instances via
 // createPrismaClient() so there is one pool per process. `Role` (the Prisma enum) is exported as
 // PrismaRole because the RBAC `Role` union above carries the same values.
@@ -71,6 +90,8 @@ export {
   DocumentStatus,
   PaymentMethod,
   Role as PrismaRole,
+  ContainerSizeType, // M9
+  VesselPollState, // M9
 } from '../generated/client/index.js';
 export type {
   PrismaClient,
@@ -92,4 +113,7 @@ export type {
   OutboxEvent,
   TariffCache,
   FxRate,
+  Container, // M9
+  ActiveVessel, // M9
+  Port, // M9
 } from '../generated/client/index.js';

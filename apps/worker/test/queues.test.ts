@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_JOB_OPTIONS,
+  EVENT_DRIVEN_QUEUES,
   QUEUE_NAMES,
   SCHEDULES,
   isQueueName,
@@ -65,6 +66,7 @@ describe('scheduleRepeatables', () => {
 
   it('every queue has at least one schedule with a stable, queue-prefixed id', () => {
     for (const name of QUEUE_NAMES) {
+      if (EVENT_DRIVEN_QUEUES.includes(name)) continue; // M9: fed by producers, no schedule
       expect(SCHEDULES[name].length).toBeGreaterThan(0);
       for (const s of SCHEDULES[name]) expect(s.id.startsWith(`${name}:`)).toBe(true);
     }

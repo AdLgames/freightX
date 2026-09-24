@@ -1,8 +1,18 @@
 import type { JobsOptions } from 'bullmq';
 
 /** Queue names. One queue per job type so each can be paused/drained independently. */
-export const QUEUE_NAMES = ['fx-refresh', 'tariff-refresh', 'quote-expiry'] as const;
+export const QUEUE_NAMES = [
+  'fx-refresh',
+  'tariff-refresh',
+  'quote-expiry',
+  'vessel-poll', // M9
+  'tracking-poll', // M9
+  'tracking-events', // M9 (event-driven: fed by the web app's webhook route, no schedule)
+] as const;
 export type QueueName = (typeof QUEUE_NAMES)[number];
+
+/** M9: queues with no repeatable schedule; jobs are added by producers (the web app). */
+export const EVENT_DRIVEN_QUEUES: readonly QueueName[] = ['tracking-events'];
 
 export const isQueueName = (s: string): s is QueueName =>
   (QUEUE_NAMES as readonly string[]).includes(s);
@@ -38,6 +48,12 @@ export const SCHEDULES: Record<QueueName, readonly RepeatableSchedule[]> = {
   ],
   'tariff-refresh': [{ id: 'tariff-refresh:nightly', pattern: '0 2 * * *' }],
   'quote-expiry': [{ id: 'quote-expiry:hourly', pattern: '0 * * * *' }],
+  // M9 (ADR-0017): the hourly sweep picks vessels whose nextPollAt has passed; the per-vessel
+  // interval (18 h / 5 h / 1 h) lives in the job, not the schedule. tracking-poll is the 6-hourly
+  // milestone fallback (brief §6.4). tracking-events has no schedule (see EVENT_DRIVEN_QUEUES).
+  'vessel-poll': [{ id: 'vessel-poll:hourly', pattern: '30 * * * *' }],
+  'tracking-poll': [{ id: 'tracking-poll:six-hourly', pattern: '15 */6 * * *' }],
+  'tracking-events': [],
 };
 
 /** The slice of `bullmq.Queue` the scheduler needs, so tests can pass a fake. */

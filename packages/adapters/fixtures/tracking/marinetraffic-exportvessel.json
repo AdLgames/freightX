@@ -1,0 +1,16 @@
+[
+  {
+    "MMSI": "219000000",
+    "IMO": "9074729",
+    "SHIPNAME": "EXAMPLE MAERSK",
+    "LAT": "5.420000",
+    "LON": "80.610000",
+    "SPEED": "179",
+    "HEADING": "292",
+    "COURSE": "291",
+    "STATUS": "0",
+    "TIMESTAMP": "2026-09-30T04:12:00",
+    "DESTINATION": "GB FXT",
+    "ETA": "2026-10-28T06:00:00"
+  }
+]

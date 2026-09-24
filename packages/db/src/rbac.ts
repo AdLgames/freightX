@@ -16,6 +16,7 @@ export const ACTIONS = [
   'shipment.book',
   'billing.manage',
   'member.manage',
+  'shipment.track', // M9: track a container / add a manual milestone (not booking — that stays gated)
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -33,6 +34,7 @@ export const RBAC_MATRIX: Readonly<Record<Action, Readonly<Record<Role, boolean>
   'shipment.book': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
   'billing.manage': { OWNER: true, ADMIN: false, MEMBER: false, VIEWER: false },
   'member.manage': { OWNER: true, ADMIN: true, MEMBER: false, VIEWER: false },
+  'shipment.track': { OWNER: true, ADMIN: true, MEMBER: true, VIEWER: false }, // M9
 };
 
 export class ForbiddenError extends Error {

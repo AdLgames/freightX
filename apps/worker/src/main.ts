@@ -118,7 +118,7 @@ const startWorker = async (): Promise<void> => {
           jobName: job.name,
           attempt: job.attemptsMade + 1,
         });
-        return wiring.runJob(name);
+        return wiring.runJob(name, job.data); // M9: event-driven queues carry their payload
       },
       { connection, concurrency: 1 },
     );

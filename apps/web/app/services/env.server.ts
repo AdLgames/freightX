@@ -72,6 +72,32 @@ const envSchema = z
     INLAND_VAT_ADJUSTMENT_LCL_GBP: gbpEnv.optional(),
     INLAND_VAT_ADJUSTMENT_FCL_GBP: gbpEnv.optional(),
     INLAND_VAT_ADJUSTMENT_AIR_GBP: gbpEnv.optional(),
+    // M9 — shipment tracking (ADR-0017). Providers default to `none`; keys are never logged.
+    TRACKING_MILESTONE_PROVIDER: z.enum(['terminal49', 'none']).default('none'),
+    TRACKING_POSITION_PROVIDER: z.enum(['spire', 'marinetraffic', 'none']).default('none'),
+    TERMINAL49_API_KEY: z.string().min(1).max(1024).optional(),
+    /** Per-provider webhook secret (§6.4). Unset → the webhook route answers 503 for that provider. */
+    TERMINAL49_WEBHOOK_SECRET: z.string().min(16).max(1024).optional(),
+    SPIRE_API_TOKEN: z.string().min(1).max(2048).optional(),
+    MARINETRAFFIC_API_KEY: z.string().min(1).max(1024).optional(),
+    /** MapLibre style JSON URL. Default: OpenFreeMap Liberty (keyless). Its origin joins the map route's CSP. */
+    MAP_STYLE_URL: z
+      .string()
+      .url()
+      .refine((u) => /^https:\/\//i.test(u), 'MAP_STYLE_URL must be https.')
+      .default('https://tiles.openfreemap.org/styles/liberty'),
+    /** Extra https origins the map may fetch tiles/glyphs/sprites from (comma-separated), e.g. a CDN. */
+    MAP_TILE_ORIGINS: z
+      .string()
+      .max(2048)
+      .transform((s) =>
+        s
+          .split(',')
+          .map((o) => o.trim())
+          .filter((o) => o !== ''),
+      )
+      .refine((list) => list.every((o) => /^https:\/\/[^/\s]+$/i.test(o)), 'https origins only')
+      .optional(),
   })
   .refine(
     (e) => (e.TRADE_TARIFF_API_KEY === undefined) === (e.TRADE_TARIFF_API_KEY_HEADER === undefined),
@@ -108,6 +134,15 @@ export const loadEnv = (source: NodeJS.ProcessEnv = process.env): Env => {
     INLAND_VAT_ADJUSTMENT_LCL_GBP: blank(source.INLAND_VAT_ADJUSTMENT_LCL_GBP),
     INLAND_VAT_ADJUSTMENT_FCL_GBP: blank(source.INLAND_VAT_ADJUSTMENT_FCL_GBP),
     INLAND_VAT_ADJUSTMENT_AIR_GBP: blank(source.INLAND_VAT_ADJUSTMENT_AIR_GBP),
+    // M9
+    TRACKING_MILESTONE_PROVIDER: blank(source.TRACKING_MILESTONE_PROVIDER),
+    TRACKING_POSITION_PROVIDER: blank(source.TRACKING_POSITION_PROVIDER),
+    TERMINAL49_API_KEY: blank(source.TERMINAL49_API_KEY),
+    TERMINAL49_WEBHOOK_SECRET: blank(source.TERMINAL49_WEBHOOK_SECRET),
+    SPIRE_API_TOKEN: blank(source.SPIRE_API_TOKEN),
+    MARINETRAFFIC_API_KEY: blank(source.MARINETRAFFIC_API_KEY),
+    MAP_STYLE_URL: blank(source.MAP_STYLE_URL),
+    MAP_TILE_ORIGINS: blank(source.MAP_TILE_ORIGINS),
   });
   return {
     ...parsed,

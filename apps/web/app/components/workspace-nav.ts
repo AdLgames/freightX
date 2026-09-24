@@ -19,5 +19,6 @@ export const WORKSPACE_NAV: readonly WorkspaceNavItem[] = [
   { to: '/app/quotes', label: 'Quotes', permission: 'quote.view' },
   { to: '/app/products', label: 'Products' },
   { to: '/app/documents', label: 'Documents', permission: 'doc.download' },
+  { to: '/app/tracking', label: 'Tracking' }, // M9 (ADR-0017): view for every role; tracking needs shipment.track
   { to: '/app/settings', label: 'Settings & billing' },
 ];

@@ -11,6 +11,8 @@ prisma/migrations/0002_rls_and_guards        hand-written: role, RLS policies, t
 prisma/migrations/0003_customs_profile_and_quote_1_1
                                              generated DDL + hand-written CHECKs/trigger/RLS
 prisma/migrations/0004_auth_sessions         generated: index on magic_link_tokens(expires_at)
+prisma/migrations/0010_tracking              M9: generated DDL + hand-written CHECKs/RLS/grants/Port seed
+src/tracking.ts   PrismaTrackingStore, PrismaVesselPollStore, withTrackingLookup(), withTrackingSweep()
 src/client.ts     createPrismaClient()       one pool per process
 src/tenancy.ts    forOrganization(), withOrgTransaction(), scopeArgs()
 src/rbac.ts       can(role, action), assertCan()
@@ -79,6 +81,41 @@ Every PR that touches `prisma/migrations` ends its description with:
 Additive migrations (new nullable column, new table, new enum value) roll back by re-deploying the
 previous release. Destructive ones (drop/rename column, narrowing type) need the snapshot ID and
 the explicit down SQL before review.
+
+## Shipment tracking (migration 0010, M9 — ADR-0017)
+
+Generated with `prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel
+prisma/schema.prisma --shadow-database-url <shadow> --script` (part 1) plus hand-written,
+idempotent CHECKs, policies, grants and the `Port` seed (part 2). Additive; rollback note in the
+file.
+
+- `Container` (`containers`, tenant table, RLS + composite FK to `shipments(id, organization_id)`):
+  ISO 6346 number (check digit validated in code, format CHECK in the DB), `sizeType`
+  (`C20GP|C40GP|C40HC|C45HC` — Prisma enum values cannot start with a digit), vessel, last milestone.
+- `Shipment.quoteId` is now **nullable** (unique index kept; a container can be tracked before any
+  quote exists) plus `reference`, `masterBillNumber`, `originLocode`, `destinationLocode`,
+  `trackingProvider`, `trackingRequestRef`, `trackingSubscribedAt`.
+- `ShipmentEvent` gains `containerId` (composite FK), `locationLocode/Name`, `latitude`/`longitude`
+  (`Decimal(9,6)` — coordinates, not money), `vesselImo`, `payloadSha256`. The idempotency key is
+  now **`(organizationId, source, providerEventId)`**: one provider event fans out to every tenant
+  tracking that container number. Still append-only.
+- `ActiveVessel` (`active_vessels`) and `Port` (`ports`) are shared, non-tenant tables
+  (`PASSTHROUGH_MODELS`): one AIS poll per ship serves every organisation. `ports` is seeded with the
+  rate-sheet ports plus SGSIN, MYPKG, LKCMB, AEJEA, EGSUZ, EGPSD, NLRTM, BEANR, DEHAM (approximate
+  coordinates, ±0.01°, for distance calculations only) and is read-only for the app role.
+- **Narrow cross-tenant reads** (the only ones in the codebase): a webhook names a container number,
+  not an organisation, so `withTrackingLookup` sets `app.tracking_container = <number>` and the
+  policy `containers_tracking_lookup` exposes exactly the rows with that number; then every write
+  runs per organisation inside `withOrgTransaction`. The 6-hourly poll fallback uses
+  `withTrackingSweep` (`app.tracking_sweep = 'on'`) to list subscribed shipments across
+  organisations. Neither setting is used anywhere else.
+- **TODO — app/worker role split.** ADR-0017 says only the worker writes `active_vessels` and only
+  the worker runs cross-organisation sweeps. Until a `harbour_worker` role exists, `harbour_app`
+  holds `INSERT, UPDATE` on `active_vessels` (no `DELETE`) and the `*_tracking_sweep` policies bind
+  every role. When the role is created: `REVOKE INSERT, UPDATE ON active_vessels FROM harbour_app`,
+  grant them to the worker role, and add `TO harbour_worker` to the two sweep policies.
+- Tests: `test/tracking.db.test.ts` (fan-out to A and B but never C, duplicates, kill switch,
+  lookup policy, sweep, append-only), `test/migrations.test.ts` (0010 block).
 
 ## Tenancy contract
 

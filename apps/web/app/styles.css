@@ -610,3 +610,116 @@ pre.stack {
     background: var(--panel);
   }
 }
+
+/* ---------- M9 tracking (ADR-0017) ---------- */
+
+.status-pill.active {
+  background: var(--link);
+}
+
+.status-pill.error {
+  background: #b3261e;
+}
+
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 24px;
+  border-left: 3px solid var(--line);
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 12px;
+  padding: 8px 0 8px 16px;
+  position: relative;
+}
+
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 14px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--link);
+  border: 2px solid #fff;
+}
+
+.timeline-item time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tracking-map-wrap {
+  margin: 0 0 24px;
+}
+
+.tracking-map {
+  width: 100%;
+  height: 420px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  position: relative;
+}
+
+.tracking-map.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tracking-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 8px 0;
+  font-size: 0.9rem;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 28px;
+  border-top: 3px solid #0b5fa5;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+.legend-line.dashed {
+  border-top-style: dashed;
+  border-top-width: 2px;
+}
+
+.legend-circle {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(11, 95, 165, 0.16);
+  border: 1px solid rgba(11, 95, 165, 0.55);
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+.vessel-cards {
+  display: grid;
+  gap: 16px;
+}
+
+.vessel-card {
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+}
+
+@media (max-width: 640px) {
+  .timeline-item {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .tracking-map {
+    height: 300px;
+  }
+}

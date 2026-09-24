@@ -81,7 +81,8 @@ export type AlertCode =
   | 'FX_ECB_FETCH_FAILED'
   | 'FX_ECB_PARSE_FAILED'
   | 'TARIFF_REFRESH_DEGRADED'
-  | 'JOB_FAILED';
+  | 'JOB_FAILED'
+  | 'TRACKING_POSITION_STALE'; // M9 (ADR-0017): a vessel failed 3 consecutive position polls
 
 export interface AlertSink {
   alert(

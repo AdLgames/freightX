@@ -16,6 +16,7 @@ import { createRedisClient } from './redis.server';
 import { createTariffClient } from './tariff.server';
 import { createTurnstile, type TurnstileVerifier } from './turnstile.server';
 import { createAuthServices, type AuthServices } from './workspace.server';
+import { createTrackingServices, type TrackingServices } from './tracking/tracking.server'; // M9
 
 /**
  * Composition root. Built once per process (memoised on `globalThis` so `react-router dev`
@@ -40,6 +41,8 @@ export interface AppServices {
   startedAt: Date;
   /** Sign-in, sessions and the workspace's database access (M1). See workspace.server.ts. */
   auth: AuthServices;
+  /** M9: shipment tracking providers, event queue and map config. See tracking/tracking.server.ts. */
+  tracking: TrackingServices;
 }
 
 export interface AppOverrides {
@@ -86,6 +89,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     now,
   });
   const fx = await seedFxStore({ store: stores.fxStore, csvPath: env.FX_SEED_CSV, logger, now });
+  const tracking = createTrackingServices({ env, logger, prisma: auth.prisma, now }); // M9
 
   logger.info('app.started', {
     nodeEnv: env.NODE_ENV,
@@ -119,6 +123,7 @@ export const createAppServices = async (overrides: AppOverrides = {}): Promise<A
     calcVersion: CALC_VERSION,
     startedAt,
     auth,
+    tracking, // M9
   };
 };
 

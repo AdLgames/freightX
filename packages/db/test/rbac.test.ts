@@ -24,6 +24,7 @@ const BRIEF: Record<Action, readonly Role[]> = {
   'shipment.book': ['OWNER', 'ADMIN'],
   'billing.manage': ['OWNER'],
   'member.manage': ['OWNER', 'ADMIN'],
+  'shipment.track': ['OWNER', 'ADMIN', 'MEMBER'], // M9 (ADR-0017): tracking is not booking
 };
 
 describe('rbac matrix', () => {
