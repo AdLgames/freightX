@@ -10,6 +10,8 @@ import {
   useMatches,
 } from 'react-router';
 import type { Route } from './+types/root';
+import { getApp } from './services/app.server';
+import { canonicalRedirect } from './services/canonical-host.server';
 import { pageErrorSchema } from './services/page-error';
 import stylesheet from './styles.css?url';
 
@@ -18,6 +20,18 @@ export const DISCLAIMER =
   'Indicative figures only. Not a contractual rate. We are not a freight forwarder or customs agent.';
 
 export const links: Route.LinksFunction = () => [{ rel: 'stylesheet', href: stylesheet }];
+
+/**
+ * Runs for every document and data request. In production a GET on any hostname other than
+ * `APP_URL` (Vercel deployment URLs, branch aliases) is sent to the same path on `APP_URL`, so
+ * sign-in and the workspace work from whichever link was opened (services/canonical-host.server.ts).
+ */
+export const loader = async ({ request }: Route.LoaderArgs) => {
+  const app = await getApp();
+  const to = canonicalRedirect(request, app.auth.appUrl, app.env.NODE_ENV === 'production');
+  if (to) throw to;
+  return null;
+};
 
 export const meta: Route.MetaFunction = () => [
   { title: 'Harbour — landed-cost calculator for UK importers' },

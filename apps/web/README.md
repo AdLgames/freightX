@@ -82,26 +82,26 @@ curl -s -X POST localhost:3123/calculator \
 
 All optional (see the root `.env.example`):
 
-| Variable                                      | Effect when set                                                      | When unset                                                            |
-| --------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `DATABASE_URL`                                | Prisma stores (`db.server.ts`) and the workspace                     | in-memory calculator stores; workspace says "needs a database"        |
-| `REDIS_URL`                                   | shared rate limiter (fails open) and session store (fails closed)    | in-memory limiter and sessions; **production: workspace 503**         |
-| `APP_URL`                                     | origin for magic links and the CSRF Origin check                     | request origin (dev/test); **production: sign-in not available**      |
-| `EMAIL_TRANSPORT`                             | `console` (dev/test only) or `resend`                                | console outside production; **production: sign-in not available**     |
-| `RESEND_API_KEY` / `EMAIL_FROM`               | Resend API key and sender, required by `EMAIL_TRANSPORT=resend`      | —                                                                     |
-| `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | Turnstile widget + server-side verification (fail closed)            | bot check off, one warning at startup                                 |
-| `FX_SEED_CSV`                                 | HMRC monthly CSV loaded into the FX store at startup                 | adapters **sample** CSV, loud `fx.sample_rates` warning               |
-| `RATE_SHEET_PATH`                             | freight rate sheet JSON                                              | `packages/adapters/rate-sheets/v1.json`, resolved through the package |
-| `SESSION_SECRET`                              | unused (session ids are random and server-side; nothing signed)      | —                                                                     |
-| `TRADE_TARIFF_API_KEY` / `…_HEADER`           | key sent in that header on every tariff call (both or neither)       | anonymous calls; only one of the two set → startup fails              |
-| `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form         | no default fee; the form says fee terms depend on the forwarder       |
-| `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown           | no adjustment                                                         |
-| `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                           | development / debug                                                   |
-| `FIELD_ENCRYPTION_KEY` (M2)                   | master key for EORI/VAT field encryption (32 bytes, base64)          | ephemeral key + warning; **production: workspace 503**                |
-| `COMPANIES_HOUSE_API_KEY` (M2)                | Companies House lookup in Settings › Organisation                    | lookup off; "sole trader or partnership" only                         |
-| `FORWARDER_EORI` / `FORWARDER_NAME` (M2)      | shown in the CDS "authorise the forwarder" step                      | "{forwarder to be confirmed}"                                         |
-| `DEMO_FLEET` (Home map)                       | `on`: members can load a simulated fleet; it moves on every map load | off: the Home map shows real tracked shipments only                   |
-| `CRON_SECRET`                                 | bearer token for `GET /api/cron/fx-refresh` (Vercel Cron)            | the cron route answers 503; the treasury widget stays empty           |
+| Variable                                      | Effect when set                                                                      | When unset                                                            |
+| --------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `DATABASE_URL`                                | Prisma stores (`db.server.ts`) and the workspace                                     | in-memory calculator stores; workspace says "needs a database"        |
+| `REDIS_URL`                                   | shared rate limiter (fails open) and session store (fails closed)                    | in-memory limiter and sessions; **production: workspace 503**         |
+| `APP_URL`                                     | origin for magic links and the CSRF Origin check; any other host 308-redirects to it | request origin (dev/test); **production: sign-in not available**      |
+| `EMAIL_TRANSPORT`                             | `console` (dev/test only) or `resend`                                                | console outside production; **production: sign-in not available**     |
+| `RESEND_API_KEY` / `EMAIL_FROM`               | Resend API key and sender, required by `EMAIL_TRANSPORT=resend`                      | —                                                                     |
+| `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | Turnstile widget + server-side verification (fail closed)                            | bot check off, one warning at startup                                 |
+| `FX_SEED_CSV`                                 | HMRC monthly CSV loaded into the FX store at startup                                 | adapters **sample** CSV, loud `fx.sample_rates` warning               |
+| `RATE_SHEET_PATH`                             | freight rate sheet JSON                                                              | `packages/adapters/rate-sheets/v1.json`, resolved through the package |
+| `SESSION_SECRET`                              | unused (session ids are random and server-side; nothing signed)                      | —                                                                     |
+| `TRADE_TARIFF_API_KEY` / `…_HEADER`           | key sent in that header on every tariff call (both or neither)                       | anonymous calls; only one of the two set → startup fails              |
+| `BROKER_DEFERMENT_FEE_PCT` / `…_MIN_GBP`      | default forwarder deferment fee terms, prefilled in the form                         | no default fee; the form says fee terms depend on the forwarder       |
+| `INLAND_VAT_ADJUSTMENT_{LCL,FCL,AIR}_GBP`     | VAT-base padding by mode when the UK inland leg is unknown                           | no adjustment                                                         |
+| `NODE_ENV`, `LOG_LEVEL`                       | production hardening (HSTS), log verbosity                                           | development / debug                                                   |
+| `FIELD_ENCRYPTION_KEY` (M2)                   | master key for EORI/VAT field encryption (32 bytes, base64)                          | ephemeral key + warning; **production: workspace 503**                |
+| `COMPANIES_HOUSE_API_KEY` (M2)                | Companies House lookup in Settings › Organisation                                    | lookup off; "sole trader or partnership" only                         |
+| `FORWARDER_EORI` / `FORWARDER_NAME` (M2)      | shown in the CDS "authorise the forwarder" step                                      | "{forwarder to be confirmed}"                                         |
+| `DEMO_FLEET` (Home map)                       | `on`: members can load a simulated fleet; it moves on every map load                 | off: the Home map shows real tracked shipments only                   |
+| `CRON_SECRET`                                 | bearer token for `GET /api/cron/fx-refresh` (Vercel Cron)                            | the cron route answers 503; the treasury widget stays empty           |
 
 `TRADE_TARIFF_API_KEY_HEADER` must be confirmed from the Trade Tariff developer portal before
 use; the key is never logged (only its presence, in `app.started`). The fee and inland-adjustment
